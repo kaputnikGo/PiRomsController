@@ -3,9 +3,10 @@
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboard
 #
-# TODO
-# method for sustain, ie not 0x00
-# stopAll() needs to be contained within block
+# NOTES:
+# must use 0x00 as note off or next note can fail to trigger
+# included 0x00 in playPin() prior to pinHex trigger
+# use None as a sustain in blocks, playPin() will skip it
 #
 from Tkinter import *
 import smbus
@@ -21,6 +22,7 @@ iodir_register = 0x00
 gpio_register = 0x09
 TIMER_SLEEP = 0.2
 RUN_LOOP = False
+# list below is for blocks with stopAll() calls
 # 0.15 is very fast, 
 # 0.175 is good fast
 # 0.2 is fast funky
@@ -28,9 +30,10 @@ RUN_LOOP = False
 # 0.4 is slow reggae
 
 BLOCK_TIMER = 0.2
+
 midiPort = 1 # set for MK-425C midi controller
 MIDI_LISTEN = False
-#dictionary for multi pins in order
+#multi pins in order
 pinsArray = {
 	0:0x00, 1:0x01, 2:0x02, 3:0x03, 4:0x04, 5:0x05,
 	6:0x06, 7:0x07, 8:0x08, 9:0x09, 10:0x0A, 
@@ -40,7 +43,7 @@ pinsArray = {
 	26:0x2A, 27:0x2B, 28:0x2C, 29:0x2D, 30:0x2E,
 	31:0x2F
 	}
-#dictionary of test triggers for patt1Test()
+#test triggers for patt1Test()
 #8 notes per block	
 block1Array = {
 	0:0x01, 1:0x03, 2:0x02, 3:0x00, 
@@ -52,12 +55,20 @@ block2Array = {
 	4:0x01, 5:0x0B, 6:0x0B, 7:0x0B
 	}
 	
-# 0x3A is attempt at null value for sustain
 block3Array = {
 	0:0x0C, 1:0x0D, 2:0x20, 3:0x3A, 
 	4:0x0C, 5:0x0D, 6:0x20, 7:0x3A
 	}
 	
+#test block used from Trial button
+# keyword None as sustain/skip entry
+blockTrial = {
+	0:0x01, 1:0x00, 2:0x03, 3:0x00,
+	4:0x04, 5:None , 6:None , 7:None,
+	8:0x08, 9:0x00, 10:0x0B, 11:None,
+	12:None, 13:None, 14:0x08, 15:0x00
+	}
+
 ########### INIT ###########
 #enable as output
 bus.write_byte_data(address, iodir_register, 0x00)
@@ -68,12 +79,17 @@ def stopAll():
 	bus.write_byte_data(address, gpio_register, 0x00)
 
 def playPin(pinHex):
-	bus.write_byte_data(address, gpio_register, pinHex)
-	#status.set("%s %d", "play pin: ", pinHex)
+	if pinHex is None:
+		return
+	else:
+		#stop all first
+		bus.write_byte_data(address, gpio_register, 0x00)
+		#then play pinHex
+		bus.write_byte_data(address, gpio_register, pinHex)
+		#status.set("%s %d", "play pinHex: ", pinHex)
 
 def oneTest():
 	status.set("%s", "test pin")
-	#playPin(0x03)
 	bus.write_byte_data(address, gpio_register, 0x03)
 	time.sleep(TIMER_SLEEP)
 	stopAll()
@@ -81,33 +97,28 @@ def oneTest():
 
 def seqRun():
 	#run through all 15
-	status.set("%s", "seq start")
+	status.set("%s", "seq all start")
 	for key in pinsArray:
 		playPin(pinsArray[key])
 		time.sleep(TIMER_SLEEP)
-		# need to stop all after each trigger
-		stopAll()
-	status.set("%s", "seq end")
+	status.set("%s", "seq all end")
 	
 def block1():
 	for key in block1Array:
 		playPin(block1Array[key])
 		time.sleep(BLOCK_TIMER)
-		stopAll()
 #end block1
 
 def block2():
 	for key in block2Array:
 		playPin(block2Array[key])
-		time.sleep(BLOCK_TIMER)
-		stopAll()	
+		time.sleep(BLOCK_TIMER)	
 #end block2
 
 def block3():
 	for key in block3Array:
 		playPin(block3Array[key])
-		time.sleep(BLOCK_TIMER)
-		stopAll()	
+		time.sleep(BLOCK_TIMER)	
 #end block3
 
 def patt1Test():
@@ -133,6 +144,17 @@ def patt1Test():
 	finally:
 		print('Stop run_loop')
 #end patt1Test
+
+def trialTest():
+	#special blocks for trialling sequencing methods
+	status.set("%s", "trial start")
+	for key in blockTrial:
+		playPin(blockTrial[key])
+		time.sleep(BLOCK_TIMER)
+	
+	status.set("%s", "end trial")
+#end trialTest	
+	
 
 def loopCheckControl(value):
 	#0=off/unselected,1=on/selected
@@ -248,6 +270,11 @@ class Controls:
 			)
 		patt1Button.pack(side=LEFT, padx=5, pady=3)
 		
+		trialButton = Button(
+			frame, text="Trial", command=self.goTrial
+			)
+		trialButton.pack(side=LEFT, padx=5, pady=3)
+		
 		self.midiButton = Button(
 			frame, text="midi", command=self.goMidi
 			)
@@ -279,6 +306,11 @@ class Controls:
 	def goPatt1(self):
 		print "patt1"
 		patt1Test()
+	#end func
+	
+	def goTrial(self):
+		print "trial"
+		trialTest()
 	#end func
 	
 	def goMidi(self, tog=[0]):
