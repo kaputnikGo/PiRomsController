@@ -1,8 +1,12 @@
-# Will-i-ROMS-Controller
+# WiLL-i-ROMS-Controller
 # version 1.0
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboard
-# Tkinter gui
+#
+# TODO
+# method for sustain, ie not 0x00
+# stopAll() needs to be contained within block
+#
 from Tkinter import *
 import smbus
 import time
@@ -16,9 +20,17 @@ address = 0x20
 iodir_register = 0x00
 gpio_register = 0x09
 TIMER_SLEEP = 0.2
+RUN_LOOP = False
+# 0.15 is very fast, 
+# 0.175 is good fast
+# 0.2 is fast funky
+# 0.3 is funky 
+# 0.4 is slow reggae
+
+BLOCK_TIMER = 0.2
 midiPort = 1 # set for MK-425C midi controller
 MIDI_LISTEN = False
-#dictionary for multi pins
+#dictionary for multi pins in order
 pinsArray = {
 	0:0x00, 1:0x01, 2:0x02, 3:0x03, 4:0x04, 5:0x05,
 	6:0x06, 7:0x07, 8:0x08, 9:0x09, 10:0x0A, 
@@ -28,7 +40,25 @@ pinsArray = {
 	26:0x2A, 27:0x2B, 28:0x2C, 29:0x2D, 30:0x2E,
 	31:0x2F
 	}
-#INIT
+#dictionary of test triggers for patt1Test()
+#8 notes per block	
+block1Array = {
+	0:0x01, 1:0x03, 2:0x02, 3:0x00, 
+	4:0x08, 5:0x0B, 6:0x00, 7:0x08
+	}
+	
+block2Array = {	
+	0:0x0B, 1:0x0B, 2:0x0B, 3:0x0B, 
+	4:0x01, 5:0x0B, 6:0x0B, 7:0x0B
+	}
+	
+# 0x3A is attempt at null value for sustain
+block3Array = {
+	0:0x0C, 1:0x0D, 2:0x20, 3:0x3A, 
+	4:0x0C, 5:0x0D, 6:0x20, 7:0x3A
+	}
+	
+########### INIT ###########
 #enable as output
 bus.write_byte_data(address, iodir_register, 0x00)
 	
@@ -39,7 +69,7 @@ def stopAll():
 
 def playPin(pinHex):
 	bus.write_byte_data(address, gpio_register, pinHex)
-	status.set("%s %d", "play pin: ", pinHex)
+	#status.set("%s %d", "play pin: ", pinHex)
 
 def oneTest():
 	status.set("%s", "test pin")
@@ -58,9 +88,65 @@ def seqRun():
 		# need to stop all after each trigger
 		stopAll()
 	status.set("%s", "seq end")
+	
+def block1():
+	for key in block1Array:
+		playPin(block1Array[key])
+		time.sleep(BLOCK_TIMER)
+		stopAll()
+#end block1
+
+def block2():
+	for key in block2Array:
+		playPin(block2Array[key])
+		time.sleep(BLOCK_TIMER)
+		stopAll()	
+#end block2
+
+def block3():
+	for key in block3Array:
+		playPin(block3Array[key])
+		time.sleep(BLOCK_TIMER)
+		stopAll()	
+#end block3
+
+def patt1Test():
+	#play a test of a block of triggers
+	status.set("%s", "patt1 start")
+	
+	try:
+		while RUN_LOOP:
+			#loop as pattern
+			for i in range(0, 3):
+				#loop as block
+				# 1-3 bars
+				for x in range(0, 2):
+					status.set("%s %d", "loop: ", x)
+					block1()
+				# 4th bar		
+				block3()
+			# end pattern			
+			block2()			
+			status.set("%s", "patt1 end")
+	except KeyboardInterrupt:
+		status.set("%s", "ctrl-c stop")
+	finally:
+		print('Stop run_loop')
+#end patt1Test
+
+def loopCheckControl(value):
+	#0=off/unselected,1=on/selected
+	global RUN_LOOP
+	if (value == 0):
+		RUN_LOOP = False
+		status.set("%s", "RUN_LOOP off")
+	else:
+		RUN_LOOP = True
+		status.set("%s", "RUN_LOOP on")
+
 
 def callback():
-	print "function callback!"
+	print "empty function callback"
 #end func
 
 def callExit():
@@ -80,8 +166,8 @@ def midiToPins(noteIn):
 	# boundary check, for now
 	if (noteIn <= 35):
 		noteIn = 36
-	elif (noteIn >= 68):
-		noteIn = 67
+	elif (noteIn >= 67):
+		noteIn = 66
 		
 	pinAdjust = noteIn - 35
 	playPin(pinsArray[pinAdjust])
@@ -135,6 +221,7 @@ class Controls:
 	def __init__(self, master):
 		frame = Frame(master)
 		frame.pack()
+		self.varLoop = IntVar()
 		
 		quitButton = Button(
 			frame, text="QUIT", fg="red", command=frame.quit
@@ -156,10 +243,21 @@ class Controls:
 			)
 		resetButton.pack(side=LEFT, padx=5, pady=3)
 		
+		patt1Button = Button(
+			frame, text="Patt1", command=self.goPatt1
+			)
+		patt1Button.pack(side=LEFT, padx=5, pady=3)
+		
 		self.midiButton = Button(
 			frame, text="midi", command=self.goMidi
 			)
 		self.midiButton.pack(side=LEFT, padx=2, pady=3)
+		
+		self.loopCheck = Checkbutton(
+			frame, text="loop", variable=self.varLoop,
+			command=self.goLoop
+			)
+		self.loopCheck.pack(side=LEFT, padx=2, pady=3)
 		
 	#control functions
 	
@@ -178,6 +276,11 @@ class Controls:
 		stopAll()
 	#end func
 	
+	def goPatt1(self):
+		print "patt1"
+		patt1Test()
+	#end func
+	
 	def goMidi(self, tog=[0]):
 		global MIDI_LISTEN	
 		tog[0] = not tog[0]
@@ -188,7 +291,11 @@ class Controls:
 		else:
 			self.midiButton.config(text='midi OFF')
 			MIDI_LISTEN = False
-		
+	#end func
+	
+	def goLoop(self):
+		print "goLoop check"
+		loopCheckControl(self.varLoop.get())	
 
 class StatusBar(Frame):
 	def __init__(self, master):
@@ -212,7 +319,7 @@ class StatusBar(Frame):
 ####### MAIN PROGRAM #######
 
 root = Tk()
-root.title("WiLL-i-ROMS Sound Controller");
+root.title("WiLL-i-ROMS Sound Controller - Hex Sequencer");
 controls = Controls(root)
 #add menu
 menu = Menu(root)
