@@ -4,9 +4,10 @@
 # raspPi -> mcp23008 -> CD4066B -> Soundboard
 #
 # NOTES:
-# must use 0x00 as note off or next note can fail to trigger
-# included 0x00 in playPin() prior to pinHex trigger
-# use None as a sustain in blocks, playPin() will skip it
+# -must use 0x00 as note off or next note can fail to trigger
+# -included 0x00 in playPin() prior to pinHex trigger
+# -use None as a sustain in blocks, playPin() will skip it
+# -midi listener is on separate thread
 #
 from Tkinter import *
 import smbus
@@ -14,6 +15,8 @@ import time
 # MIDI input
 # https://spotlightkid.github.io/python-rtmidi/
 from rtmidi.midiutil import open_midiport
+
+import threading
 
 #vars
 bus = smbus.SMBus(1)
@@ -28,8 +31,8 @@ RUN_LOOP = False
 # 0.2 is fast funky
 # 0.3 is funky 
 # 0.4 is slow reggae
-
 BLOCK_TIMER = 0.2
+TRIAL_TIMER = 0.1
 
 midiPort = 1 # set for MK-425C midi controller
 MIDI_LISTEN = False
@@ -72,11 +75,16 @@ blockTrial = {
 ########### INIT ###########
 #enable as output
 bus.write_byte_data(address, iodir_register, 0x00)
+
 	
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
 	bus.write_byte_data(address, gpio_register, 0x00)
+	
+def kybdHalt():
+	status.set("%s", "ctrl-c stop")
+	stopAll()
 
 def playPin(pinHex):
 	if pinHex is None:
@@ -140,7 +148,7 @@ def patt1Test():
 			block2()			
 			status.set("%s", "patt1 end")
 	except KeyboardInterrupt:
-		status.set("%s", "ctrl-c stop")
+		kybdHalt()
 	finally:
 		print('Stop run_loop')
 #end patt1Test
@@ -150,7 +158,17 @@ def trialTest():
 	status.set("%s", "trial start")
 	for key in blockTrial:
 		playPin(blockTrial[key])
-		time.sleep(BLOCK_TIMER)
+		time.sleep(TRIAL_TIMER)
+	#run once, and loop if enabled
+	try:
+		while RUN_LOOP:
+			for key in blockTrial:
+				playPin(blockTrial[key])
+				time.sleep(TRIAL_TIMER)
+	except KeyboardInterrupt:
+		kybdHalt()
+	finally:
+		print('stop trial loop')	
 	
 	status.set("%s", "end trial")
 #end trialTest	
@@ -175,65 +193,102 @@ def callExit():
 	print "Exit called"
 #end func
 
+########### THREAD CLASS ###########
+
+class SeqThread(threading.Thread):
+	def __init__(self):
+		threading.Thread.__init__(self)
+		
+	def run(self):
+		status.set("%s", "thread start")
+		for key in blockTrial:
+			playPin(blockTrial[key])
+			time.sleep(TRIAL_TIMER)
+			
+		#run once, and loop if enabled
+		try:
+			while RUN_LOOP:
+				for key in blockTrial:
+					playPin(blockTrial[key])
+					time.sleep(TRIAL_TIMER)
+		except KeyboardInterrupt:
+			kybdHalt()
+		finally:
+			print('stop trial loop')	
+		
+		status.set("%s", "thread end")
+#end
+
 ########### MIDI INPUT ###########
 
 # needs to be on separate thread, is consuming GUI
 
-def midiToPins(noteIn):
-	# c=36, c#=37, etc
-	# subtract 35 to get pinsArray[key]
-	# assume has a note on velocity here
-	# todo account for octave, etc
-	
-	# boundary check, for now
-	if (noteIn <= 35):
-		noteIn = 36
-	elif (noteIn >= 67):
-		noteIn = 66
+class MidiThread(threading.Thread):
+
+	def __init__(self):
+		threading.Thread.__init__(self)
+
+	global midiToPins
+	def midiToPins(noteIn):
+		# c=36, c#=37, etc
+		# subtract 35 to get pinsArray[key]
+		# assume has a note on velocity here
+		# todo account for octave, etc
 		
-	pinAdjust = noteIn - 35
-	playPin(pinsArray[pinAdjust])
-	
-
-def midiToPinsOff():
-	#serves as note off/vel=0
-	stopAll()
-	
-def midiListen(message):
-	# from list [0,1,2]
-	# [1] = note number :: map to pins
-	# [2] = vel (0-127)
-	if (message[2] >= 1):
-		midiToPins(message[1])
-	else:
-		midiToPinsOff()
-
-def midiError():
-	status.set("%s %d", "Midi error for port: ", midiPort)
+		# boundary check, for now
+		if (noteIn <= 35):
+			noteIn = 36
+		elif (noteIn >= 67):
+			noteIn = 66
+			
+		pinAdjust = noteIn - 35
+		playPin(pinsArray[pinAdjust])
 		
-def midiTest():
-	try:
-		midiin, port_name = open_midiport(midiPort)
-	except (EOFError, KeyboardInterrupt):
-		midiError()
+	global midiToPinsOff
+	def midiToPinsOff():
+		#serves as note off/vel=0
+		stopAll()
 	
-	status.set("%s", "Start midi listener")	
-	try:
-		while MIDI_LISTEN:
-			msg = midiin.get_message()
-			if msg:
-				message, deltatime = msg
-				midiListen(message)	
-				
-			time.sleep(0.01)
+	global midiListen	
+	def midiListen(message):
+		# from list [0,1,2]
+		# [1] = note number :: map to pins
+		# [2] = vel (0-127)
+		if (message[2] >= 1):
+			midiToPins(message[1])
+		else:
+			midiToPinsOff()
 
-	except KeyboardInterrupt:
-		print('')
-	finally:
-		print('Stop midi listener')
-		midiin.close_port()
-		del midiin	
+	global midiError
+	def midiError():
+		status.set("%s %d", "Midi error for port: ", midiPort)
+	#end funcs
+			
+	def run(self):
+		try:
+			midiin, port_name = open_midiport(midiPort)
+		except (EOFError, KeyboardInterrupt):
+			midiError()
+		
+		status.set("%s", "Start midi listener")	
+		try:
+			while MIDI_LISTEN:
+				msg = midiin.get_message()
+				if msg:
+					message, deltatime = msg
+					midiListen(message)	
+					
+				time.sleep(0.01)
 
+		except KeyboardInterrupt:
+			kybdHalt()
+		finally:
+			print('Stop midi listener')
+			midiin.close_port()
+			del midiin
+	
+	#def midiTest():
+	# duped to run(self)
 
 
 ###### INTERFACE #######
@@ -285,6 +340,7 @@ class Controls:
 			command=self.goLoop
 			)
 		self.loopCheck.pack(side=LEFT, padx=2, pady=3)
+		frame.bind("<Button-1>", self.goLoop)
 		
 	#control functions
 	
@@ -308,9 +364,28 @@ class Controls:
 		patt1Test()
 	#end func
 	
+	def checkThreadSQ(self):
+		if self.sq.isAlive():
+			root.after(500, self.checkThreadSQ)
+		else:
+			print "end SQ thread"
+			return
+	#end func
+	
 	def goTrial(self):
 		print "trial"
-		trialTest()
+		#trialTest()
+		self.sq = SeqThread()
+		self.sq.start()
+		self.checkThreadSQ()
+	#end func
+	
+	def checkThreadMT(self):
+		if self.mt.isAlive():
+			root.after(500, self.checkThreadMT)
+		else:
+			print "end MT thread"
+			return
 	#end func
 	
 	def goMidi(self, tog=[0]):
@@ -319,7 +394,10 @@ class Controls:
 		if tog[0]:
 			self.midiButton.config(text='midi ON')
 			MIDI_LISTEN = True
-			midiTest()
+			#midiTest()
+			self.mt = MidiThread()
+			self.mt.start()
+			self.checkThreadMT()
 		else:
 			self.midiButton.config(text='midi OFF')
 			MIDI_LISTEN = False
@@ -327,6 +405,9 @@ class Controls:
 	
 	def goLoop(self):
 		print "goLoop check"
+		loopCheckControl(self.varLoop.get())
+		
+	def loopBind(event):
 		loopCheckControl(self.varLoop.get())	
 
 class StatusBar(Frame):
