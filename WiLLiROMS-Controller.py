@@ -10,6 +10,7 @@
 # -midi listener is on separate thread
 #
 from Tkinter import *
+import tkSimpleDialog
 import smbus
 import time
 # MIDI input
@@ -71,6 +72,12 @@ blockTrial = {
 	8:0x08, 9:0x00, 10:0x0B, 11:None,
 	12:None, 13:None, 14:0x08, 15:0x00
 	}
+blockTrial2 = {
+	0:0x0E, 1:0x02, 2:0x0E, 3:0x02,
+	4:0x20, 5:None, 6:0x02, 7:None,
+	}
+
+blockUserList = []
 
 ########### INIT ###########
 #enable as output
@@ -109,6 +116,7 @@ def seqRun():
 	for key in pinsArray:
 		playPin(pinsArray[key])
 		time.sleep(TIMER_SLEEP)
+	stopAll()
 	status.set("%s", "seq all end")
 	
 def block1():
@@ -128,6 +136,21 @@ def block3():
 		playPin(block3Array[key])
 		time.sleep(BLOCK_TIMER)	
 #end block3
+
+def userBlock(result):
+	status.set("%s %s", "result: ", result)
+	#make into list
+	global blockUserList
+	blockUserList = result.split(',')
+	for entry in blockUserList:
+		if entry == "None":
+			entry = None			
+		else:
+			#entry = hex(int(entry, 16))
+			entry = "{0:#0{1}x}".format(int(entry, 16),4)
+		print entry
+	
+	
 
 def patt1Test():
 	#play a test of a block of triggers
@@ -152,6 +175,15 @@ def patt1Test():
 	finally:
 		print('Stop run_loop')
 #end patt1Test
+
+def userBlockTest():
+	status.set("%s", "user block start")
+	for entry in blockUserList:
+		print entry
+		playPin(entry)
+		time.sleep(TRIAL_TIMER)
+	status.set("%s", "end user block")
+#end func
 
 def trialTest():
 	#special blocks for trialling sequencing methods
@@ -201,15 +233,15 @@ class SeqThread(threading.Thread):
 		
 	def run(self):
 		status.set("%s", "thread start")
-		for key in blockTrial:
-			playPin(blockTrial[key])
+		for key in blockTrial2:
+			playPin(blockTrial2[key])
 			time.sleep(TRIAL_TIMER)
 			
 		#run once, and loop if enabled
 		try:
 			while RUN_LOOP:
-				for key in blockTrial:
-					playPin(blockTrial[key])
+				for key in blockTrial2:
+					playPin(blockTrial2[key])
 					time.sleep(TRIAL_TIMER)
 		except KeyboardInterrupt:
 			kybdHalt()
@@ -294,6 +326,17 @@ class MidiThread(threading.Thread):
 ###### INTERFACE #######
 # http://effbot.org/tkinterbook/
 
+class BlockDialog(tkSimpleDialog.Dialog):	
+	def body(self, master):
+		Label(master, text="Hex:").grid(row=0, sticky=W)
+		self.entry1 = Entry(master)
+		self.entry1.grid(row=0, column=1)
+		return self.entry1 #focus
+		
+	def apply(self):
+		self.result = self.entry1.get()
+#end class
+
 class Controls:
 	def __init__(self, master):
 		frame = Frame(master)
@@ -342,6 +385,11 @@ class Controls:
 		self.loopCheck.pack(side=LEFT, padx=2, pady=3)
 		frame.bind("<Button-1>", self.goLoop)
 		
+		blockButton = Button(
+			frame, text="Block", command=self.goBlock
+			)
+		blockButton.pack(side=LEFT, padx=5, pady=3)
+		
 	#control functions
 	
 	def goTest(self):
@@ -361,7 +409,8 @@ class Controls:
 	
 	def goPatt1(self):
 		print "patt1"
-		patt1Test()
+		#patt1Test()
+		userBlockTest()
 	#end func
 	
 	def checkThreadSQ(self):
@@ -374,7 +423,6 @@ class Controls:
 	
 	def goTrial(self):
 		print "trial"
-		#trialTest()
 		self.sq = SeqThread()
 		self.sq.start()
 		self.checkThreadSQ()
@@ -385,6 +433,7 @@ class Controls:
 			root.after(500, self.checkThreadMT)
 		else:
 			print "end MT thread"
+			status.set("%s", "Stop midi listener")
 			return
 	#end func
 	
@@ -394,7 +443,6 @@ class Controls:
 		if tog[0]:
 			self.midiButton.config(text='midi ON')
 			MIDI_LISTEN = True
-			#midiTest()
 			self.mt = MidiThread()
 			self.mt.start()
 			self.checkThreadMT()
@@ -408,7 +456,14 @@ class Controls:
 		loopCheckControl(self.varLoop.get())
 		
 	def loopBind(event):
-		loopCheckControl(self.varLoop.get())	
+		loopCheckControl(self.varLoop.get())
+	#end
+	
+	def goBlock(self):
+		#present form of block hex to edit and run
+		blockDialog = BlockDialog(root)
+		userBlock(blockDialog.result)
+#end class		
 
 class StatusBar(Frame):
 	def __init__(self, master):
@@ -432,7 +487,7 @@ class StatusBar(Frame):
 ####### MAIN PROGRAM #######
 
 root = Tk()
-root.title("WiLL-i-ROMS Sound Controller - Hex Sequencer");
+root.title("WiLL-i-ROMS Sound Controller - Hex Sequencer")
 controls = Controls(root)
 #add menu
 menu = Menu(root)
