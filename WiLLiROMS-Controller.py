@@ -10,26 +10,23 @@
 # -use None as a sustain in blocks, playPin() will skip it
 # -midi listener is on separate thread
 # TODO
-# - need file append, file view and choose, use a saves folder
-# - timer/bpm slider or control
-# - open Block shows current blockUserList (if exists)
+# - need file append/edit option
+# - prep for card 2
+# - CC messages - woah, each trigs pin 1...
 #
 from Tkinter import *
 import tkSimpleDialog
+from tkFileDialog import askopenfilename
 import smbus
 import time
-# MIDI input
-# https://spotlightkid.github.io/python-rtmidi/
 from rtmidi.midiutil import open_midiport
-
 import threading
 
-#vars
-bus = smbus.SMBus(1)
-address = 0x20
-iodir_register = 0x00
-gpio_register = 0x09
-TIMER_SLEEP = 0.2
+#GLOBALS
+CARD_1_ADDR = 0x20
+CARD_2_ADDR = 0x40 # is it?
+
+TEST_TIMER = 0.2
 RUN_LOOP = False
 # list below is for blocks with stopAll() calls
 # 0.15 is very fast, 
@@ -37,14 +34,13 @@ RUN_LOOP = False
 # 0.2 is fast funky
 # 0.3 is funky 
 # 0.4 is slow reggae
-BLOCK_TIMER = 0.2
-TRIAL_TIMER = 0.1
-
-midiPort = 1 # set for MK-425C midi controller
+MAIN_TIMER = 0.2
 MIDI_LISTEN = False
 
-SEQ_LIST = ["patt1Test", "userBlockPlay"]
+SEQ_LIST = ["patt1Test", "card1Play"]
 USER_SEQ = ""
+CARD_1_LIST = []
+CARD_2_LIST = []
 
 #multi pins in order
 pinsArray = {
@@ -56,8 +52,7 @@ pinsArray = {
 	26:0x2A, 27:0x2B, 28:0x2C, 29:0x2D, 30:0x2E,
 	31:0x2F
 	}
-#test triggers for patt1Test()
-#8 notes per block	
+#blocks for patt1Test()	
 block1Array = {
 	0:0x01, 1:0x03, 2:0x02, 3:0x00, 
 	4:0x08, 5:0x0B, 6:0x00, 7:0x08
@@ -72,31 +67,19 @@ block3Array = {
 	0:0x0C, 1:0x0D, 2:0x20, 3:0x3A, 
 	4:0x0C, 5:0x0D, 6:0x20, 7:0x3A
 	}
-	
-#test block used from Trial button
-# keyword None as sustain/skip entry
-blockTrial = {
-	0:0x01, 1:0x00, 2:0x03, 3:0x00,
-	4:0x04, 5:None , 6:None , 7:None,
-	8:0x08, 9:0x00, 10:0x0B, 11:None,
-	12:None, 13:None, 14:0x08, 15:0x00
-	}
-blockTrial2 = {
-	0:0x0E, 1:0x02, 2:0x0E, 3:0x02,
-	4:0x20, 5:None, 6:0x02, 7:None,
-	}
-
-blockUserList = []
 
 ########### INIT ###########
+bus = smbus.SMBus(1)
+iodir_register = 0x00
+gpio_register = 0x09
 #enable as output
-bus.write_byte_data(address, iodir_register, 0x00)
-
+bus.write_byte_data(CARD_1_ADDR, iodir_register, 0x00)
+midiPort = 1 # set for MK-425C midi controller
 	
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
-	bus.write_byte_data(address, gpio_register, 0x00)
+	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
 	status.set("%s", "stop all")
 	
 def kybdHalt():
@@ -109,65 +92,80 @@ def playPin(pinHex):
 		return
 	else:
 		#stop all first
-		bus.write_byte_data(address, gpio_register, 0x00)
+		bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
 		#then play pinHex
-		bus.write_byte_data(address, gpio_register, pinHex)
+		bus.write_byte_data(CARD_1_ADDR, gpio_register, pinHex)
 		#status.set("%s %d", "play pinHex: ", pinHex)
-
+		
+def updateTimer(userTime):
+	status.set("%s %s", "timer update: ", userTime)
+	if not userTime:
+		return
+	elif (userTime < 0.1):
+		return
+	elif (userTime > 1.0):
+		return
+	else:
+		global MAIN_TIMER
+		MAIN_TIMER = userTime
 
 ############## TEST BLOCKS ################
 def oneTest():
 	status.set("%s", "test pin")
-	bus.write_byte_data(address, gpio_register, 0x03)
-	time.sleep(TIMER_SLEEP)
+	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x03)
+	time.sleep(TEST_TIMER)
 	stopAll()
 
 
 def allTest():
 	#run through all 31
-	status.set("%s", "test all start")
+	status.set("%s", "test all")
 	for key in pinsArray:
 		playPin(pinsArray[key])
-		time.sleep(TIMER_SLEEP)
+		time.sleep(TEST_TIMER)
 	stopAll()
 	
 def block1():
 	for key in block1Array:
 		playPin(block1Array[key])
-		time.sleep(BLOCK_TIMER)
+		time.sleep(MAIN_TIMER)
 #end block1
 
 def block2():
 	for key in block2Array:
 		playPin(block2Array[key])
-		time.sleep(BLOCK_TIMER)	
+		time.sleep(MAIN_TIMER)	
 #end block2
 
 def block3():
 	for key in block3Array:
 		playPin(block3Array[key])
-		time.sleep(BLOCK_TIMER)	
+		time.sleep(MAIN_TIMER)	
 #end block3
 
 ############ USER BLOCK ###############
-def userBlock(result):
-	status.set("%s %s", "user block: ", result)
-	#make into list
-	global blockUserList
-	blockUserList = result.split(',')
-	print blockUserList	
+def createBlock(result):
+	status.set("%s %s", "create block: ", result)
+	if not result:
+		return
+	else:	
+		#make into list
+		global CARD_1_LIST
+		CARD_1_LIST = result.split(',')
+		print CARD_1_LIST	
 	
-def userBlockPlay():
-	# check if have a userBlock or suffer
-	global blockUserList
-	if not blockUserList:
-		status.set("%s", "user block empty")
+def card1Play():
+	# check if have a list or suffer
+	global CARD_1_LIST
+	global MAIN_TIMER
+	if not CARD_1_LIST:
+		status.set("%s", "card 1 list empty")
 		loopCheckControl(0)
 		return
 	else:	
-		status.set("%s", "user block play")
+		status.set("%s", "card 1 list play")
 		#checks and converts
-		for entry in blockUserList:
+		for entry in CARD_1_LIST:
 			if entry == "n":
 				entry = None
 			elif entry == "":
@@ -176,7 +174,7 @@ def userBlockPlay():
 				entry = int(entry)
 			#play it
 			playPin(pinsArray.get(entry, None))
-			time.sleep(TRIAL_TIMER)
+			time.sleep(MAIN_TIMER)
 #end func
 	
 def patt1Test():
@@ -204,32 +202,33 @@ def newSeq():
 	status.set("%s", "new not implemented")
 	
 def loadSeq():
-	global blockUserList
-	with open('BlockSave.txt') as file:
+	global CARD_1_LIST
+	fileName = askopenfilename()
+	with open(fileName) as file:
 		fileContents = file.read()
-		blockUserList = fileContents.split(',')
+		CARD_1_LIST = fileContents.split(',')
 		#file.close()
-	print blockUserList
-	status.set("%s", "file read into user block")
+	print CARD_1_LIST
+	status.set("%s", "file read into card 1 list")
 		
 def saveSeq():
-	global blockUserList
-	if not blockUserList:
+	global CARD_1_LIST
+	if not CARD_1_LIST:
 		status.set("%s", "no block data to save")
 		return
 	else:
-		file_ = open('BlockSave.txt', 'w')		
+		file_ = open('Card1Save.txt', 'w')		
 		counter = 0			
-		for entry in blockUserList:
+		for entry in CARD_1_LIST:
 			#catch last line here
-			if (counter < len(blockUserList) - 1):
+			if (counter < len(CARD_1_LIST) - 1):
 				file_.write("%s" % entry + ",")
 				counter += 1
 			else:
 				file_.write("%s" % entry)
 				
 		file_.close()
-		status.set("%s", "user block saved to file")
+		status.set("%s", "card 1 list saved to file")
 
 def callback():
 	status.set("%s", "empty callback")
@@ -332,7 +331,6 @@ class MidiThread(threading.Thread):
 #end class
 
 ###### INTERFACE CLASSES #######
-# http://effbot.org/tkinterbook/
 class AboutDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
@@ -342,16 +340,44 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		Label(master, text="KaputnikGo, 2017").grid(row=4,sticky=W)
 	
 	
-class BlockDialog(tkSimpleDialog.Dialog):	
+class CreateDialog(tkSimpleDialog.Dialog):	
 	def body(self, master):
-		Label(master, text="int or n(none):").grid(row=0, sticky=W)
+		Label(master, text="card 1:").grid(row=0, sticky=W)
 		self.entry1 = Entry(master)
+		
+		global CARD_1_LIST
+		if CARD_1_LIST:
+			counter = 0
+			entryString = ""
+			for entry in CARD_1_LIST:
+				if (counter < len(CARD_1_LIST) - 1):
+					entryString += (entry + ",")
+					counter += 1
+				else:
+					entryString += entry
+				
+			self.entry1.insert(END, entryString)
+			
 		self.entry1.grid(row=0, column=1)
 		return self.entry1 #focus
 		
 	def apply(self):
 		self.result = self.entry1.get()
 #end class
+
+class TimerDialog(tkSimpleDialog.Dialog):
+	def body(self, master):
+		Label(master, text="range:1.0 - 0.1").grid(row=0,sticky=W)
+		self.entryTimer = Entry(master)
+		
+		global MAIN_TIMER
+		self.entryTimer.insert(END, MAIN_TIMER)
+		self.entryTimer.grid(row=0, column=1)
+		return self.entryTimer #focus
+		
+	def apply(self):
+		self.userTime = float(self.entryTimer.get())
+		
 
 class Controls:
 	def __init__(self, master):
@@ -368,16 +394,6 @@ class Controls:
 			)
 		quitButton.pack(side=LEFT, padx=5, pady=3)
 		
-		testButton = Button(
-			frame, text="Test", command=self.goTest
-			)
-		testButton.pack(side=LEFT, padx=5, pady=3)
-		
-		testAllButton = Button(
-			frame, text="Test All", command=self.goTestAll
-			)
-		testAllButton.pack(side=LEFT, padx=5, pady=3)
-		
 		resetButton = Button(
 			frame, text="Reset", command=self.goReset
 			)
@@ -388,10 +404,10 @@ class Controls:
 			)
 		self.midiButton.pack(side=LEFT, padx=2, pady=3)
 		
-		blockButton = Button(
-			frame, text="Block", command=self.goBlock
+		createButton = Button(
+			frame, text="Create", command=self.goCreate
 			)
-		blockButton.pack(side=LEFT, padx=5, pady=3)
+		createButton.pack(side=LEFT, padx=5, pady=3)
 		
 		self.loopCheck = Checkbutton(
 			frame, text="loop", variable=self.varLoop,
@@ -406,21 +422,15 @@ class Controls:
 			)
 		playSeqButton.pack(side=LEFT, padx=5, pady=3)
 		
+		timerButton = Button(
+			frame, text="Timer", command=self.goTimer
+			)
+		timerButton.pack(side=LEFT, padx=5, pady=3)
+		
 		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
 		seqOptions.pack()
 		
-	#control functions
-	
-	def goTest(self):
-		print "test"
-		oneTest()
-	#end func
-	
-	def goTestAll(self):
-		print "test all"
-		allTest()
-	#end func
-	
+			
 	def goReset(self):
 		print "reset"
 		stopAll()
@@ -449,10 +459,10 @@ class Controls:
 			MIDI_LISTEN = False
 	#end func
 	
-	def goBlock(self):
+	def goCreate(self):
 		#dialog box for user input of int keys and Nones
-		blockDialog = BlockDialog(root)
-		userBlock(blockDialog.result)
+		createDialog = CreateDialog(root)
+		createBlock(createDialog.result)
 	
 	def goLoop(self):
 		print "goLoop check"
@@ -479,6 +489,11 @@ class Controls:
 		self.sq.start()
 		self.checkThreadSQ()
 	#end func
+	
+	def goTimer(self):
+		timerDialog = TimerDialog(root)
+		updateTimer(timerDialog.userTime)
+		
 			
 #end class		
 
@@ -508,6 +523,7 @@ controls = Controls(root)
 #add menu
 menu = Menu(root)
 root.config(menu=menu)
+
 filemenu = Menu(menu)
 menu.add_cascade(label="File", menu=filemenu)
 filemenu.add_command(label="New", command=newSeq)
@@ -516,6 +532,12 @@ filemenu.add_separator()
 filemenu.add_command(label="Save", command=saveSeq)
 filemenu.add_separator()
 filemenu.add_command(label="Exit", command=callExit)
+
+utilmenu = Menu(menu)
+menu.add_cascade(label="Util", menu=utilmenu)
+utilmenu.add_command(label="Test one", command=oneTest)
+utilmenu.add_command(label="Test all", command=allTest)
+
 infomenu = Menu(menu)
 menu.add_cascade(label="Info", menu=infomenu)
 infomenu.add_command(label="Help", command=helpDialog)
