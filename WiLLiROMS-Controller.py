@@ -2,12 +2,17 @@
 # version 1.0
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboard
+# using python -V 2.7.3
 #
 # NOTES:
 # -must use 0x00 as note off or next note can fail to trigger
 # -included 0x00 in playPin() prior to pinHex trigger
 # -use None as a sustain in blocks, playPin() will skip it
 # -midi listener is on separate thread
+# TODO
+# - need file append, file view and choose, use a saves folder
+# - timer/bpm slider or control
+# - open Block shows current blockUserList (if exists)
 #
 from Tkinter import *
 import tkSimpleDialog
@@ -37,6 +42,10 @@ TRIAL_TIMER = 0.1
 
 midiPort = 1 # set for MK-425C midi controller
 MIDI_LISTEN = False
+
+SEQ_LIST = ["patt1Test", "userBlockPlay"]
+USER_SEQ = ""
+
 #multi pins in order
 pinsArray = {
 	0:0x00, 1:0x01, 2:0x02, 3:0x03, 4:0x04, 5:0x05,
@@ -88,9 +97,11 @@ bus.write_byte_data(address, iodir_register, 0x00)
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
 	bus.write_byte_data(address, gpio_register, 0x00)
+	status.set("%s", "stop all")
 	
 def kybdHalt():
-	status.set("%s", "ctrl-c stop")
+	status.set("%s", "kybd halt")
+	loopCheckControl(0)
 	stopAll()
 
 def playPin(pinHex):
@@ -103,6 +114,8 @@ def playPin(pinHex):
 		bus.write_byte_data(address, gpio_register, pinHex)
 		#status.set("%s %d", "play pinHex: ", pinHex)
 
+
+############## TEST BLOCKS ################
 def oneTest():
 	status.set("%s", "test pin")
 	bus.write_byte_data(address, gpio_register, 0x03)
@@ -110,14 +123,13 @@ def oneTest():
 	stopAll()
 
 
-def seqRun():
-	#run through all 15
-	status.set("%s", "seq all start")
+def allTest():
+	#run through all 31
+	status.set("%s", "test all start")
 	for key in pinsArray:
 		playPin(pinsArray[key])
 		time.sleep(TIMER_SLEEP)
 	stopAll()
-	status.set("%s", "seq all end")
 	
 def block1():
 	for key in block1Array:
@@ -137,74 +149,44 @@ def block3():
 		time.sleep(BLOCK_TIMER)	
 #end block3
 
+############ USER BLOCK ###############
 def userBlock(result):
-	status.set("%s %s", "result: ", result)
+	status.set("%s %s", "user block: ", result)
 	#make into list
 	global blockUserList
 	blockUserList = result.split(',')
-	for entry in blockUserList:
-		if entry == "None":
-			entry = None			
-		else:
-			#entry = hex(int(entry, 16))
-			entry = "{0:#0{1}x}".format(int(entry, 16),4)
-		print entry
+	print blockUserList	
 	
-	
-
-def patt1Test():
-	#play a test of a block of triggers
-	status.set("%s", "patt1 start")
-	
-	try:
-		while RUN_LOOP:
-			#loop as pattern
-			for i in range(0, 3):
-				#loop as block
-				# 1-3 bars
-				for x in range(0, 2):
-					status.set("%s %d", "loop: ", x)
-					block1()
-				# 4th bar		
-				block3()
-			# end pattern			
-			block2()			
-			status.set("%s", "patt1 end")
-	except KeyboardInterrupt:
-		kybdHalt()
-	finally:
-		print('Stop run_loop')
-#end patt1Test
-
-def userBlockTest():
-	status.set("%s", "user block start")
-	for entry in blockUserList:
-		print entry
-		playPin(entry)
-		time.sleep(TRIAL_TIMER)
-	status.set("%s", "end user block")
+def userBlockPlay():
+	# check if have a userBlock or suffer
+	global blockUserList
+	if not blockUserList:
+		status.set("%s", "user block empty")
+		loopCheckControl(0)
+		return
+	else:	
+		status.set("%s", "user block play")
+		#checks and converts
+		for entry in blockUserList:
+			if entry == "n":
+				entry = None
+			elif entry == "":
+				entry = None
+			else:
+				entry = int(entry)
+			#play it
+			playPin(pinsArray.get(entry, None))
+			time.sleep(TRIAL_TIMER)
 #end func
-
-def trialTest():
-	#special blocks for trialling sequencing methods
-	status.set("%s", "trial start")
-	for key in blockTrial:
-		playPin(blockTrial[key])
-		time.sleep(TRIAL_TIMER)
-	#run once, and loop if enabled
-	try:
-		while RUN_LOOP:
-			for key in blockTrial:
-				playPin(blockTrial[key])
-				time.sleep(TRIAL_TIMER)
-	except KeyboardInterrupt:
-		kybdHalt()
-	finally:
-		print('stop trial loop')	
 	
-	status.set("%s", "end trial")
-#end trialTest	
-	
+def patt1Test():
+	status.set("%s", "patt1 test")
+	for i in range(0, 1):
+		for x in range(0, 2):
+			block1()		
+			block3()			
+		block2()			
+#end patt1Test	
 
 def loopCheckControl(value):
 	#0=off/unselected,1=on/selected
@@ -216,45 +198,74 @@ def loopCheckControl(value):
 		RUN_LOOP = True
 		status.set("%s", "RUN_LOOP on")
 
+########### FILE HELP MENU ###########
+# TODO
+def newSeq():
+	status.set("%s", "new not implemented")
+	
+def loadSeq():
+	global blockUserList
+	with open('BlockSave.txt') as file:
+		fileContents = file.read()
+		blockUserList = fileContents.split(',')
+		#file.close()
+	print blockUserList
+	status.set("%s", "file read into user block")
+		
+def saveSeq():
+	global blockUserList
+	if not blockUserList:
+		status.set("%s", "no block data to save")
+		return
+	else:
+		file_ = open('BlockSave.txt', 'w')		
+		counter = 0			
+		for entry in blockUserList:
+			#catch last line here
+			if (counter < len(blockUserList) - 1):
+				file_.write("%s" % entry + ",")
+				counter += 1
+			else:
+				file_.write("%s" % entry)
+				
+		file_.close()
+		status.set("%s", "user block saved to file")
 
 def callback():
-	print "empty function callback"
+	status.set("%s", "empty callback")
 #end func
-
 def callExit():
-	print "Exit called"
+	status.set("%s", "exit not implemented")
 #end func
+def helpDialog():
+	status.set("%s", "help not implemented")
+	
+def aboutDialog():
+	aboutDialog = AboutDialog(root)
 
-########### THREAD CLASS ###########
-
+########### SEQ THREAD CLASS ###########
+# this will play out the current function
+# kybd interrupt crashes it
 class SeqThread(threading.Thread):
+	
 	def __init__(self):
 		threading.Thread.__init__(self)
+		# check or suffer
+		global USER_SEQ
+		if not USER_SEQ:
+			USER_SEQ = globals()["patt1Test"()]()
 		
 	def run(self):
-		status.set("%s", "thread start")
-		for key in blockTrial2:
-			playPin(blockTrial2[key])
-			time.sleep(TRIAL_TIMER)
-			
-		#run once, and loop if enabled
-		try:
-			while RUN_LOOP:
-				for key in blockTrial2:
-					playPin(blockTrial2[key])
-					time.sleep(TRIAL_TIMER)
-		except KeyboardInterrupt:
-			kybdHalt()
-		finally:
-			print('stop trial loop')	
+		status.set("%s", "seq thread start")
+		global USER_SEQ
+		while RUN_LOOP:
+			globals()[USER_SEQ]()
 		
-		status.set("%s", "thread end")
-#end
+		status.set("%s", "seq thread end")	
+		return
+#end class
 
-########### MIDI INPUT ###########
-
-# needs to be on separate thread, is consuming GUI
-
+########### MIDI INPUT CLASS ###########
 class MidiThread(threading.Thread):
 
 	def __init__(self):
@@ -318,17 +329,22 @@ class MidiThread(threading.Thread):
 			print('Stop midi listener')
 			midiin.close_port()
 			del midiin
-	
-	#def midiTest():
-	# duped to run(self)
+#end class
 
-
-###### INTERFACE #######
+###### INTERFACE CLASSES #######
 # http://effbot.org/tkinterbook/
-
+class AboutDialog(tkSimpleDialog.Dialog):
+	def body(self, master):
+		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
+		Label(master, text="Hex Sequencer version 1").grid(row=1,sticky=W)
+		Label(master, text="(single board testing)").grid(row=2,sticky=W)
+		Label(master, text="---------------------").grid(row=3,sticky=W)
+		Label(master, text="KaputnikGo, 2017").grid(row=4,sticky=W)
+	
+	
 class BlockDialog(tkSimpleDialog.Dialog):	
 	def body(self, master):
-		Label(master, text="Hex:").grid(row=0, sticky=W)
+		Label(master, text="int or n(none):").grid(row=0, sticky=W)
 		self.entry1 = Entry(master)
 		self.entry1.grid(row=0, column=1)
 		return self.entry1 #focus
@@ -343,6 +359,10 @@ class Controls:
 		frame.pack()
 		self.varLoop = IntVar()
 		
+		global seqName
+		seqName = StringVar(master)
+		seqName.set(SEQ_LIST[0])
+		
 		quitButton = Button(
 			frame, text="QUIT", fg="red", command=frame.quit
 			)
@@ -353,42 +373,41 @@ class Controls:
 			)
 		testButton.pack(side=LEFT, padx=5, pady=3)
 		
-		seqButton = Button(
-			frame, text="Seq", command=self.goSeqRun
+		testAllButton = Button(
+			frame, text="Test All", command=self.goTestAll
 			)
-		seqButton.pack(side=LEFT, padx=5, pady=3)
+		testAllButton.pack(side=LEFT, padx=5, pady=3)
 		
 		resetButton = Button(
 			frame, text="Reset", command=self.goReset
 			)
 		resetButton.pack(side=LEFT, padx=5, pady=3)
 		
-		patt1Button = Button(
-			frame, text="Patt1", command=self.goPatt1
-			)
-		patt1Button.pack(side=LEFT, padx=5, pady=3)
-		
-		trialButton = Button(
-			frame, text="Trial", command=self.goTrial
-			)
-		trialButton.pack(side=LEFT, padx=5, pady=3)
-		
 		self.midiButton = Button(
-			frame, text="midi", command=self.goMidi
+			frame, text="midi OFF", command=self.goMidi
 			)
 		self.midiButton.pack(side=LEFT, padx=2, pady=3)
-		
-		self.loopCheck = Checkbutton(
-			frame, text="loop", variable=self.varLoop,
-			command=self.goLoop
-			)
-		self.loopCheck.pack(side=LEFT, padx=2, pady=3)
-		frame.bind("<Button-1>", self.goLoop)
 		
 		blockButton = Button(
 			frame, text="Block", command=self.goBlock
 			)
 		blockButton.pack(side=LEFT, padx=5, pady=3)
+		
+		self.loopCheck = Checkbutton(
+			frame, text="loop", variable=self.varLoop,
+			command=self.goLoop
+			)
+			
+		self.loopCheck.pack(side=LEFT, padx=2, pady=3)
+		frame.bind("<Button-1>", self.goLoop)
+		
+		playSeqButton = Button(
+			frame, text="Play", command=self.goPlaySeq
+			)
+		playSeqButton.pack(side=LEFT, padx=5, pady=3)
+		
+		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
+		seqOptions.pack()
 		
 	#control functions
 	
@@ -397,37 +416,17 @@ class Controls:
 		oneTest()
 	#end func
 	
-	def goSeqRun(self):
-		print "seq"
-		seqRun()
+	def goTestAll(self):
+		print "test all"
+		allTest()
 	#end func
 	
 	def goReset(self):
 		print "reset"
 		stopAll()
 	#end func
-	
-	def goPatt1(self):
-		print "patt1"
-		#patt1Test()
-		userBlockTest()
-	#end func
-	
-	def checkThreadSQ(self):
-		if self.sq.isAlive():
-			root.after(500, self.checkThreadSQ)
-		else:
-			print "end SQ thread"
-			return
-	#end func
-	
-	def goTrial(self):
-		print "trial"
-		self.sq = SeqThread()
-		self.sq.start()
-		self.checkThreadSQ()
-	#end func
-	
+
+#midiListen thread	
 	def checkThreadMT(self):
 		if self.mt.isAlive():
 			root.after(500, self.checkThreadMT)
@@ -435,13 +434,12 @@ class Controls:
 			print "end MT thread"
 			status.set("%s", "Stop midi listener")
 			return
-	#end func
-	
+	#end func	
 	def goMidi(self, tog=[0]):
 		global MIDI_LISTEN	
 		tog[0] = not tog[0]
 		if tog[0]:
-			self.midiButton.config(text='midi ON')
+			self.midiButton.config(text='midi ON_')
 			MIDI_LISTEN = True
 			self.mt = MidiThread()
 			self.mt.start()
@@ -451,6 +449,11 @@ class Controls:
 			MIDI_LISTEN = False
 	#end func
 	
+	def goBlock(self):
+		#dialog box for user input of int keys and Nones
+		blockDialog = BlockDialog(root)
+		userBlock(blockDialog.result)
+	
 	def goLoop(self):
 		print "goLoop check"
 		loopCheckControl(self.varLoop.get())
@@ -459,10 +462,24 @@ class Controls:
 		loopCheckControl(self.varLoop.get())
 	#end
 	
-	def goBlock(self):
-		#present form of block hex to edit and run
-		blockDialog = BlockDialog(root)
-		userBlock(blockDialog.result)
+#playSeq thread, SeqThread(sequence)
+	def checkThreadSQ(self):
+		if self.sq.isAlive():
+			root.after(500, self.checkThreadSQ)
+		else:
+			print "end SQ thread"
+			return
+	#end func	
+	def goPlaySeq(self):
+		print "play seqName:"
+		print seqName.get()
+		global USER_SEQ
+		USER_SEQ = seqName.get()
+		self.sq = SeqThread()
+		self.sq.start()
+		self.checkThreadSQ()
+	#end func
+			
 #end class		
 
 class StatusBar(Frame):
@@ -485,22 +502,24 @@ class StatusBar(Frame):
 #end class
 
 ####### MAIN PROGRAM #######
-
 root = Tk()
-root.title("WiLL-i-ROMS Sound Controller - Hex Sequencer")
+root.title("WiLL-i-ROMS Controller - Hex Sequencer")
 controls = Controls(root)
 #add menu
 menu = Menu(root)
 root.config(menu=menu)
 filemenu = Menu(menu)
 menu.add_cascade(label="File", menu=filemenu)
-filemenu.add_command(label="New", command=callback)
-filemenu.add_command(label="Open", command=callback)
+filemenu.add_command(label="New", command=newSeq)
+filemenu.add_command(label="Load", command=loadSeq)
+filemenu.add_separator()
+filemenu.add_command(label="Save", command=saveSeq)
 filemenu.add_separator()
 filemenu.add_command(label="Exit", command=callExit)
-helpmenu = Menu(menu)
-menu.add_cascade(label="Help", menu=helpmenu)
-helpmenu.add_command(label="About", command=callback)
+infomenu = Menu(menu)
+menu.add_cascade(label="Info", menu=infomenu)
+infomenu.add_command(label="Help", command=helpDialog)
+infomenu.add_command(label="About", command=aboutDialog)
 
 photo = PhotoImage(file="Williams-SndBrd.gif")
 label = Label(root, image=photo)
@@ -514,4 +533,3 @@ status.set("%s", "ready")
 
 root.mainloop()
 root.destroy()
-stopAll()
