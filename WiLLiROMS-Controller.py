@@ -9,10 +9,14 @@
 # -included 0x00 in playPin() prior to pinHex trigger
 # -use None as a sustain in blocks, playPin() will skip it
 # -midi listener is on separate thread
+# -both cards have pin 19 as NO SOUND - RESTTER
+#
 # TODO
 # - need file append/edit option
 # - prep for card 2
 # - CC messages - woah, each trigs pin 1...
+# - change sequencer file to be as a tracker, line per beat
+# - [card1][cc][card2][cc]...
 #
 from Tkinter import *
 import tkSimpleDialog
@@ -24,7 +28,7 @@ import threading
 
 #GLOBALS
 CARD_1_ADDR = 0x20
-CARD_2_ADDR = 0x40 # is it?
+CARD_2_ADDR = 0x21
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
@@ -74,12 +78,18 @@ iodir_register = 0x00
 gpio_register = 0x09
 #enable as output
 bus.write_byte_data(CARD_1_ADDR, iodir_register, 0x00)
+bus.write_byte_data(CARD_2_ADDR, iodir_register, 0x00)
 midiPort = 1 # set for MK-425C midi controller
 	
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
+	#play pin 19 as a resetter
+	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x23)
+	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x23)
+	#then zero
 	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
+	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
 	status.set("%s", "stop all")
 	
 def kybdHalt():
@@ -93,8 +103,10 @@ def playPin(pinHex):
 	else:
 		#stop all first
 		bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
+		bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
 		#then play pinHex
 		bus.write_byte_data(CARD_1_ADDR, gpio_register, pinHex)
+		bus.write_byte_data(CARD_2_ADDR, gpio_register, pinHex)
 		#status.set("%s %d", "play pinHex: ", pinHex)
 		
 def updateTimer(userTime):
@@ -113,6 +125,7 @@ def updateTimer(userTime):
 def oneTest():
 	status.set("%s", "test pin")
 	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x03)
+	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x03)
 	time.sleep(TEST_TIMER)
 	stopAll()
 
@@ -335,7 +348,7 @@ class AboutDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
 		Label(master, text="Hex Sequencer version 1").grid(row=1,sticky=W)
-		Label(master, text="(single board testing)").grid(row=2,sticky=W)
+		Label(master, text="(two board testing)").grid(row=2,sticky=W)
 		Label(master, text="---------------------").grid(row=3,sticky=W)
 		Label(master, text="KaputnikGo, 2017").grid(row=4,sticky=W)
 	
