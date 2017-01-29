@@ -9,7 +9,9 @@
 # -included 0x00 in playPin() prior to pinHex trigger
 # -use None as a sustain in blocks, playPin() will skip it
 # -midi listener is on separate thread
+# -midi switchable to single card or all cards
 # -new sequencer file format for multiple cards
+# -tracker canvas enabled with playhead
 #
 # TODO
 # - user write/edit/save file sequence
@@ -22,6 +24,7 @@
 from Tkinter import *
 import tkSimpleDialog
 from tkFileDialog import askopenfilename
+import tkFont
 import smbus
 import time
 from rtmidi.midiutil import open_midiport
@@ -36,9 +39,10 @@ RUN_LOOP = False
 MAIN_TIMER = 0.2
 MIDI_LISTEN = False
 
-CARD_LIST = ["CARD_1", "CARD_2"]
+CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2"]
 SEQ_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
 USER_SEQ = ""
+USER_CARD = ""
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
 
@@ -129,11 +133,26 @@ def updateTimer(userTime):
 		MAIN_TIMER = userTime
 
 ############## FILE PLAY ################
-def dumpSeqFile():
+def trackerSeqFileFormat(lineNum, line):
+	carded = line.split("|")
+	card1 = carded[0].split(",")
+	card2 = carded[1].split(",")
+	printLine = (str(lineNum) + "\t" + card1[0] + "\t" + card1[1] +
+		"\t" + card2[0] + "\t" + card2[1])
+	
+	tracker.set(printLine)
+
+def trackerSeqFile():
 	global SEQ_FILE_CONTENT
-	for line in SEQ_FILE_CONTENT:
-		print line
+	lineNum = 1
+	tracker.clear()
+	tracker.set("NUM\tCARD1\tCC\tCARD2\tCC")
+	for line in SEQ_FILE_CONTENT:		
+		trackerSeqFileFormat(lineNum, line)
+		lineNum += 1
 		
+	tracker.scrollbarSet(lineNum)
+	tracker.highlight(1)
 #end func
 
 def checkValidSeqPin(temp):
@@ -157,10 +176,10 @@ def seqFilePlay():
 		return
 	else:	
 		status.set("%s", "seq file play")
+		lineCounter = 1
 		for line in SEQ_FILE_CONTENT:
 			carded = line.split("|")
-			print carded
-			
+			#print carded			
 			pin1 = carded[0].split(",")
 			pin1[0] = checkValidSeqPin(pin1[0])
 			pin2 = carded[1].split(",")
@@ -168,8 +187,10 @@ def seqFilePlay():
 			#disregard pinX[1] as reserved for CC, not used yet			
 			playCardPin(CARD_1_ADDR, pinsArray.get(pin1[0], None))
 			playCardPin(CARD_2_ADDR, pinsArray.get(pin2[0], None))
+			tracker.highlight(lineCounter)
+			lineCounter += 1
 			time.sleep(MAIN_TIMER)
-			
+
 		status.set("%s", "seq file end")
 
 ############## TEST BLOCKS ################
@@ -267,7 +288,7 @@ def loadBlock():
 		fileContents = file.read()
 		BLOCK_LIST = fileContents.split(',')
 		#file.close()
-	print BLOCK_LIST
+	tracker.set(BLOCK_LIST)
 	status.set("%s", "file read into block list")
 
 def loadSeqFile():
@@ -279,7 +300,7 @@ def loadSeqFile():
 	#remove whitespace chars
 	SEQ_FILE_CONTENT = [line.strip() for line in SEQ_FILE_CONTENT]
 	status.set("%s", "seq file read")
-	dumpSeqFile()	
+	trackerSeqFile()	
 		
 def saveBlock():
 	global BLOCK_LIST
@@ -348,16 +369,21 @@ class MidiThread(threading.Thread):
 		# c=36, c#=37, etc
 		# subtract 35 to get pinsArray[key]
 		# assume has a note on velocity here
-		# todo account for octave, etc
-		
 		# boundary check, for now
 		if (noteIn <= 35):
 			noteIn = 36
 		elif (noteIn >= 67):
 			noteIn = 66
-			
+		
+		# bit clunky
+		global USER_CARD	
 		pinAdjust = noteIn - 35
-		playPin(pinsArray[pinAdjust])
+		if USER_CARD == "CARD_1":
+			playCardPin(CARD_1_ADDR, pinsArray[pinAdjust])
+		elif USER_CARD == "CARD_2":
+			playCardPin(CARD_2_ADDR, pinsArray[pinAdjust])
+		else:
+			playPin(pinsArray[pinAdjust])
 		
 	global midiToPinsOff
 	def midiToPinsOff():
@@ -385,7 +411,9 @@ class MidiThread(threading.Thread):
 		except (EOFError, KeyboardInterrupt):
 			midiError()
 		
-		status.set("%s", "Start midi listener")	
+		print "start MT thread"
+		global USER_CARD
+		status.set("%s %s", "Start midi listener on ", USER_CARD)	
 		try:
 			while MIDI_LISTEN:
 				msg = midiin.get_message()
@@ -467,56 +495,44 @@ class Controls:
 		cardName.set(CARD_LIST[0])
 		
 		quitButton = Button(
-			frame, text="QUIT", fg="red", command=frame.quit
-			)
+			frame, text="QUIT", fg="red", command=frame.quit)
 		
 		resetButton = Button(
-			frame, text="Reset", command=self.goReset
-			)
+			frame, text="Reset", command=self.goReset)
 		
 		self.midiButton = Button(
-			frame, text="midi OFF", command=self.goMidi
-			)
+			frame, text="midi OFF", command=self.goMidi)
 		
 		createButton = Button(
-			frame, text="Create", command=self.goCreate
-			)
+			frame, text="Create", command=self.goCreate)
 		
 		self.loopCheck = Checkbutton(
 			frame, text="loop", variable=self.varLoop,
-			command=self.goLoop
-			)
-			
+			command=self.goLoop)			
 		frame.bind("<Button-1>", self.goLoop)
 		
 		playSeqButton = Button(
-			frame, text="Play", command=self.goPlaySeq
-			)
+			frame, text="Play", command=self.goPlaySeq)
 		
 		timerButton = Button(
-			frame, text="Timer", command=self.goTimer
-			)
+			frame, text="Timer", command=self.goTimer)
 		
-		cardOptions = apply(OptionMenu, (master, cardName) + tuple(CARD_LIST)
-			)
+		cardOptions = apply(OptionMenu, (master, cardName) + tuple(CARD_LIST))
 		
-		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST)
-			)
+		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
 
-		print "pack it"
+		print "load interface"
 		frame.grid(column=0,row=0)#, columnspan=4, rowspan=4)
 		quitButton.grid(row=0, column=0, padx=5, sticky=W)
 		resetButton.grid(row=0, column=1, padx=3)
-		self.midiButton.grid(row=0, column=2, padx=3)
-		createButton.grid(row=0, column=3, padx=3)
-		cardOptions.grid(row=0, column=4, padx=3, sticky=N)
+		createButton.grid(row=0, column=2, padx=3)
+		self.midiButton.grid(row=0, column=3, padx=3)
+		cardOptions.grid(row=0, column=4, padx=1, sticky=NW)
 		seqOptions.grid(row=0, column=5, padx=3, sticky=N)
 		
-		self.loopCheck.grid(row=1, column=0)
+		self.loopCheck.grid(row=1, column=0, sticky=W)
 		playSeqButton.grid(row=1, column=1)
-		timerButton.grid(row=1, column=2)
-
-		
+		timerButton.grid(row=1, column=2)		
 			
 	def goReset(self):
 		print "reset"
@@ -533,11 +549,13 @@ class Controls:
 			return
 	#end func	
 	def goMidi(self, tog=[0]):
-		global MIDI_LISTEN	
+		global MIDI_LISTEN
+		global USER_CARD	
 		tog[0] = not tog[0]
 		if tog[0]:
 			self.midiButton.config(text='midi ON_')
 			MIDI_LISTEN = True
+			USER_CARD = cardName.get()
 			self.mt = MidiThread()
 			self.mt.start()
 			self.checkThreadMT()
@@ -582,13 +600,68 @@ class Controls:
 		updateTimer(timerDialog.userTime)
 		
 			
-#end class		
+#end class	
+
+class Tracker(Frame):
+	def __init__(self, master):
+		Frame.__init__(self, master)
+		self.seqLength = 0
+		self.canvas = Canvas(self, width=500, height=300,
+			bg="black", scrollregion=(0, 0, 0, 400))
+			
+		#left,top,right,bottom
+		self.highlighter = self.canvas.create_rectangle(0,5,500,19, 
+			fill="#5c5c5c")
+			
+		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
+		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
+		self.canvas.config(yscrollcommand=self.yscrollbar.set)
+		self.yscrollbar.config(command=self.canvas.yview)
+		
+		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)	
+
+		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")		
+		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
+			font=self.vFont, fill="green")			
+		self.fontHeight = self.vFont.metrics("linespace")
+		
+		self.canvas.itemconfig(self.canvasTextID, text="noob tracker")
+	
+	def __call__(self, format, *args):
+		#self.label.config(text=format % args)
+		self.canvas.update_idletasks()
+		
+	def set(self, message):
+		self.canvas.insert(self.canvasTextID, INSERT, message)
+		self.canvas.insert(self.canvasTextID, INSERT, "\n")
+		self.canvas.update_idletasks()
+		
+	def scrollbarSet(self, lineNum):
+		#account for zero not counted
+		self.seqLength = lineNum + 1
+		self.canvas.config(scrollregion=self.canvas.bbox(ALL))
+		bounds = self.canvas.bbox(ALL)
+		self.seqHeight = bounds[3] - bounds[1]		
+		self.moveFraction = float(1 / float(self.seqHeight / self.fontHeight))
+		
+	def clear(self):
+		self.canvas.dchars(self.canvasTextID, 0, END)
+		self.canvas.update_idletasks()
+		
+	def highlight(self, lineNum):
+		# account for font y offset from top
+		startY = (lineNum * self.fontHeight) + 5
+		endY = startY + self.fontHeight
+		self.canvas.coords(self.highlighter, 0, startY, 500, endY)
+		# move scrollbar
+		self.canvas.yview_moveto(lineNum * self.moveFraction)
+		
+#end class
 
 class StatusBar(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
 		self.label = Label(self, bd=1, relief=SUNKEN, anchor=W)
-		#self.label.pack(fill=X)
 		self.label.grid(columnspan=6, sticky=NW)
 	
 	def __call__(self, format, *args):
@@ -625,18 +698,17 @@ filemenu.add_command(label="Exit", command=callExit)
 
 utilmenu = Menu(menu)
 menu.add_cascade(label="Util", menu=utilmenu)
-utilmenu.add_command(label="Test one", command=oneTest)
-utilmenu.add_command(label="Test all", command=allTest)
+utilmenu.add_command(label="Test one pin", command=oneTest)
+utilmenu.add_command(label="Test all pins", command=allTest)
 
 infomenu = Menu(menu)
 menu.add_cascade(label="Info", menu=infomenu)
 infomenu.add_command(label="Help", command=helpDialog)
 infomenu.add_command(label="About", command=aboutDialog)
 
-photo = PhotoImage(file="Williams-SndBrd.gif")
-label = Label(root, image=photo)
-label.image = photo #store it
-label.grid(row=2,column=0, columnspan=6)
+#tracker view
+tracker = Tracker(root)
+tracker.grid(row=2, column=0, columnspan=6)
 
 #statusbar
 status = StatusBar(root)
