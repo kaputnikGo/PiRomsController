@@ -5,18 +5,19 @@
 # using python -V 2.7.3
 #
 # NOTES:
-# -must use 0x00 as note off or next note can fail to trigger
+# -must use 0x00 and 0x23 as note off or next note can fail to trigger
 # -included 0x00 in playPin() prior to pinHex trigger
 # -use None as a sustain in blocks, playPin() will skip it
 # -midi listener is on separate thread
-# -both cards have pin 19 as NO SOUND - RESTTER
+# -new sequencer file format for multiple cards
 #
 # TODO
-# - need file append/edit option
-# - prep for card 2
-# - CC messages - woah, each trigs pin 1...
-# - change sequencer file to be as a tracker, line per beat
-# - [card1][cc][card2][cc]...
+# - user write/edit/save file sequence
+# - userBlock card switcher
+# - CC messages - all CCs trig pin 1 every data send tick
+# - rom12.716 organ trigger ?
+# - pinX[1] as CC or volume pot per card via pwm
+# - single,universal pwm addressed to MCP23008->CD4066->card
 #
 from Tkinter import *
 import tkSimpleDialog
@@ -32,19 +33,15 @@ CARD_2_ADDR = 0x21
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
-# list below is for blocks with stopAll() calls
-# 0.15 is very fast, 
-# 0.175 is good fast
-# 0.2 is fast funky
-# 0.3 is funky 
-# 0.4 is slow reggae
 MAIN_TIMER = 0.2
 MIDI_LISTEN = False
 
-SEQ_LIST = ["patt1Test", "card1Play"]
+CARD_LIST = ["CARD_1", "CARD_2"]
+SEQ_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
 USER_SEQ = ""
-CARD_1_LIST = []
-CARD_2_LIST = []
+BLOCK_LIST = []
+SEQ_FILE_CONTENT = []
+
 
 #multi pins in order
 pinsArray = {
@@ -84,12 +81,12 @@ midiPort = 1 # set for MK-425C midi controller
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
-	#play pin 19 as a resetter
-	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x23)
-	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x23)
-	#then zero
+	#zero
 	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
 	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
+	#play pin 19 as a resetter, no sound
+	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x23)
+	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x23)
 	status.set("%s", "stop all")
 	
 def kybdHalt():
@@ -109,6 +106,16 @@ def playPin(pinHex):
 		bus.write_byte_data(CARD_2_ADDR, gpio_register, pinHex)
 		#status.set("%s %d", "play pinHex: ", pinHex)
 		
+def playCardPin(cardHex, pinHex):
+	if pinHex is None:
+		return
+	else:
+		#stop all first
+		bus.write_byte_data(cardHex, gpio_register, 0x00)
+		#play pin
+		bus.write_byte_data(cardHex, gpio_register, pinHex)
+		#status.set("%s %d %d", "play card,pinHex: ", cardHex, pinHex)
+		
 def updateTimer(userTime):
 	status.set("%s %s", "timer update: ", userTime)
 	if not userTime:
@@ -120,6 +127,50 @@ def updateTimer(userTime):
 	else:
 		global MAIN_TIMER
 		MAIN_TIMER = userTime
+
+############## FILE PLAY ################
+def dumpSeqFile():
+	global SEQ_FILE_CONTENT
+	for line in SEQ_FILE_CONTENT:
+		print line
+		
+#end func
+
+def checkValidSeqPin(temp):
+	if temp == "n":
+		temp = None
+	elif temp == "":
+		temp = None
+	else:
+		temp = int(temp)
+	return temp
+	
+def seqFilePlay():
+	#have list of seq lines "11,0|1,0" etc
+	global SEQ_FILE_CONTENT
+	global CARD_1_ADDR
+	global CARD_2_ADDR
+	
+	if not SEQ_FILE_CONTENT:
+		status.set("%s", "seq file content empty")
+		loopCheckControl(0)
+		return
+	else:	
+		status.set("%s", "seq file play")
+		for line in SEQ_FILE_CONTENT:
+			carded = line.split("|")
+			print carded
+			
+			pin1 = carded[0].split(",")
+			pin1[0] = checkValidSeqPin(pin1[0])
+			pin2 = carded[1].split(",")
+			pin2[0] = checkValidSeqPin(pin2[0])
+			#disregard pinX[1] as reserved for CC, not used yet			
+			playCardPin(CARD_1_ADDR, pinsArray.get(pin1[0], None))
+			playCardPin(CARD_2_ADDR, pinsArray.get(pin2[0], None))
+			time.sleep(MAIN_TIMER)
+			
+		status.set("%s", "seq file end")
 
 ############## TEST BLOCKS ################
 def oneTest():
@@ -163,28 +214,23 @@ def createBlock(result):
 		return
 	else:	
 		#make into list
-		global CARD_1_LIST
-		CARD_1_LIST = result.split(',')
-		print CARD_1_LIST	
+		global BLOCK_LIST
+		BLOCK_LIST = result.split(',')
+		print BLOCK_LIST	
 	
-def card1Play():
+def blockPlay():
 	# check if have a list or suffer
-	global CARD_1_LIST
+	global BLOCK_LIST
 	global MAIN_TIMER
-	if not CARD_1_LIST:
-		status.set("%s", "card 1 list empty")
+	if not BLOCK_LIST:
+		status.set("%s", "block list empty")
 		loopCheckControl(0)
 		return
 	else:	
-		status.set("%s", "card 1 list play")
+		status.set("%s", "block list play")
 		#checks and converts
-		for entry in CARD_1_LIST:
-			if entry == "n":
-				entry = None
-			elif entry == "":
-				entry = None
-			else:
-				entry = int(entry)
+		for entry in BLOCK_LIST:
+			entry = checkValidSeqPin(entry)
 			#play it
 			playPin(pinsArray.get(entry, None))
 			time.sleep(MAIN_TIMER)
@@ -209,39 +255,53 @@ def loopCheckControl(value):
 		RUN_LOOP = True
 		status.set("%s", "RUN_LOOP on")
 
-########### FILE HELP MENU ###########
+########### FILE UTIL INFO ###########
 # TODO
 def newSeq():
 	status.set("%s", "new not implemented")
 	
-def loadSeq():
-	global CARD_1_LIST
+def loadBlock():
+	global BLOCK_LIST
 	fileName = askopenfilename()
 	with open(fileName) as file:
 		fileContents = file.read()
-		CARD_1_LIST = fileContents.split(',')
+		BLOCK_LIST = fileContents.split(',')
 		#file.close()
-	print CARD_1_LIST
-	status.set("%s", "file read into card 1 list")
+	print BLOCK_LIST
+	status.set("%s", "file read into block list")
+
+def loadSeqFile():
+	global SEQ_FILE_CONTENT
+	fileName = askopenfilename()
+	with open(fileName) as file:
+		SEQ_FILE_CONTENT = file.readlines()
+	
+	#remove whitespace chars
+	SEQ_FILE_CONTENT = [line.strip() for line in SEQ_FILE_CONTENT]
+	status.set("%s", "seq file read")
+	dumpSeqFile()	
 		
-def saveSeq():
-	global CARD_1_LIST
-	if not CARD_1_LIST:
+def saveBlock():
+	global BLOCK_LIST
+	if not BLOCK_LIST:
 		status.set("%s", "no block data to save")
 		return
 	else:
-		file_ = open('Card1Save.txt', 'w')		
+		file_ = open('BlockSave.txt', 'w')		
 		counter = 0			
-		for entry in CARD_1_LIST:
+		for entry in BLOCK_LIST:
 			#catch last line here
-			if (counter < len(CARD_1_LIST) - 1):
+			if (counter < len(BLOCK_LIST) - 1):
 				file_.write("%s" % entry + ",")
 				counter += 1
 			else:
 				file_.write("%s" % entry)
 				
 		file_.close()
-		status.set("%s", "card 1 list saved to file")
+		status.set("%s", "block list saved to file")
+
+def saveSeqFile():
+	status.set("%s", "new not implemented")
 
 def callback():
 	status.set("%s", "empty callback")
@@ -349,8 +409,9 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
 		Label(master, text="Hex Sequencer version 1").grid(row=1,sticky=W)
 		Label(master, text="(two board testing)").grid(row=2,sticky=W)
-		Label(master, text="---------------------").grid(row=3,sticky=W)
-		Label(master, text="KaputnikGo, 2017").grid(row=4,sticky=W)
+		Label(master, text="(tracker type testing)").grid(row=3,sticky=W)
+		Label(master, text="---------------------").grid(row=4,sticky=W)
+		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
 	
 	
 class CreateDialog(tkSimpleDialog.Dialog):	
@@ -358,12 +419,12 @@ class CreateDialog(tkSimpleDialog.Dialog):
 		Label(master, text="card 1:").grid(row=0, sticky=W)
 		self.entry1 = Entry(master)
 		
-		global CARD_1_LIST
-		if CARD_1_LIST:
+		global BLOCK_LIST
+		if BLOCK_LIST:
 			counter = 0
 			entryString = ""
-			for entry in CARD_1_LIST:
-				if (counter < len(CARD_1_LIST) - 1):
+			for entry in BLOCK_LIST:
+				if (counter < len(BLOCK_LIST) - 1):
 					entryString += (entry + ",")
 					counter += 1
 				else:
@@ -395,53 +456,66 @@ class TimerDialog(tkSimpleDialog.Dialog):
 class Controls:
 	def __init__(self, master):
 		frame = Frame(master)
-		frame.pack()
 		self.varLoop = IntVar()
 		
 		global seqName
 		seqName = StringVar(master)
 		seqName.set(SEQ_LIST[0])
 		
+		global cardName
+		cardName = StringVar(master)
+		cardName.set(CARD_LIST[0])
+		
 		quitButton = Button(
 			frame, text="QUIT", fg="red", command=frame.quit
 			)
-		quitButton.pack(side=LEFT, padx=5, pady=3)
 		
 		resetButton = Button(
 			frame, text="Reset", command=self.goReset
 			)
-		resetButton.pack(side=LEFT, padx=5, pady=3)
 		
 		self.midiButton = Button(
 			frame, text="midi OFF", command=self.goMidi
 			)
-		self.midiButton.pack(side=LEFT, padx=2, pady=3)
 		
 		createButton = Button(
 			frame, text="Create", command=self.goCreate
 			)
-		createButton.pack(side=LEFT, padx=5, pady=3)
 		
 		self.loopCheck = Checkbutton(
 			frame, text="loop", variable=self.varLoop,
 			command=self.goLoop
 			)
 			
-		self.loopCheck.pack(side=LEFT, padx=2, pady=3)
 		frame.bind("<Button-1>", self.goLoop)
 		
 		playSeqButton = Button(
 			frame, text="Play", command=self.goPlaySeq
 			)
-		playSeqButton.pack(side=LEFT, padx=5, pady=3)
 		
 		timerButton = Button(
 			frame, text="Timer", command=self.goTimer
 			)
-		timerButton.pack(side=LEFT, padx=5, pady=3)
 		
-		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
-		seqOptions.pack()
+		cardOptions = apply(OptionMenu, (master, cardName) + tuple(CARD_LIST)
+			)
+		
+		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST)
+			)
+
+		print "pack it"
+		frame.grid(column=0,row=0)#, columnspan=4, rowspan=4)
+		quitButton.grid(row=0, column=0, padx=5, sticky=W)
+		resetButton.grid(row=0, column=1, padx=3)
+		self.midiButton.grid(row=0, column=2, padx=3)
+		createButton.grid(row=0, column=3, padx=3)
+		cardOptions.grid(row=0, column=4, padx=3, sticky=N)
+		seqOptions.grid(row=0, column=5, padx=3, sticky=N)
+		
+		self.loopCheck.grid(row=1, column=0)
+		playSeqButton.grid(row=1, column=1)
+		timerButton.grid(row=1, column=2)
+
 		
 			
 	def goReset(self):
@@ -514,7 +588,8 @@ class StatusBar(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
 		self.label = Label(self, bd=1, relief=SUNKEN, anchor=W)
-		self.label.pack(fill=X)
+		#self.label.pack(fill=X)
+		self.label.grid(columnspan=6, sticky=NW)
 	
 	def __call__(self, format, *args):
 		self.label.config(text=format % args)
@@ -540,9 +615,11 @@ root.config(menu=menu)
 filemenu = Menu(menu)
 menu.add_cascade(label="File", menu=filemenu)
 filemenu.add_command(label="New", command=newSeq)
-filemenu.add_command(label="Load", command=loadSeq)
+filemenu.add_command(label="Load Block", command=loadBlock)
+filemenu.add_command(label="Load Sequence", command=loadSeqFile)
 filemenu.add_separator()
-filemenu.add_command(label="Save", command=saveSeq)
+filemenu.add_command(label="Save Block", command=saveBlock)
+filemenu.add_command(label="Save Sequence", command=saveSeqFile)
 filemenu.add_separator()
 filemenu.add_command(label="Exit", command=callExit)
 
@@ -559,11 +636,11 @@ infomenu.add_command(label="About", command=aboutDialog)
 photo = PhotoImage(file="Williams-SndBrd.gif")
 label = Label(root, image=photo)
 label.image = photo #store it
-label.pack()
+label.grid(row=2,column=0, columnspan=6)
 
 #statusbar
 status = StatusBar(root)
-status.pack(side=BOTTOM, fill=X)
+status.grid(row=3, column=0, columnspan=6, sticky=NW)
 status.set("%s", "ready")
 
 root.mainloop()
