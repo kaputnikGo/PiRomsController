@@ -12,10 +12,12 @@
 # -midi switchable to single card or all cards
 # -new sequencer file format for multiple cards
 # -tracker canvas enabled with playhead
+# -blockPlay user card switcher
+# -edit tracker window clunky, not yet affecting played sequence
 #
 # TODO
+# - pause seq button, then it resumes..
 # - user write/edit/save file sequence
-# - userBlock card switcher
 # - CC messages - all CCs trig pin 1 every data send tick
 # - rom12.716 organ trigger ?
 # - pinX[1] as CC or volume pot per card via pwm
@@ -25,6 +27,7 @@ from Tkinter import *
 import tkSimpleDialog
 from tkFileDialog import askopenfilename
 import tkFont
+import tkMessageBox
 import smbus
 import time
 from rtmidi.midiutil import open_midiport
@@ -187,7 +190,7 @@ def seqFilePlay():
 			#disregard pinX[1] as reserved for CC, not used yet			
 			playCardPin(CARD_1_ADDR, pinsArray.get(pin1[0], None))
 			playCardPin(CARD_2_ADDR, pinsArray.get(pin2[0], None))
-			tracker.highlight(lineCounter)
+			tracker.movePlayhead(lineCounter)
 			lineCounter += 1
 			time.sleep(MAIN_TIMER)
 
@@ -243,6 +246,8 @@ def blockPlay():
 	# check if have a list or suffer
 	global BLOCK_LIST
 	global MAIN_TIMER
+	global USER_CARD
+	
 	if not BLOCK_LIST:
 		status.set("%s", "block list empty")
 		loopCheckControl(0)
@@ -253,7 +258,12 @@ def blockPlay():
 		for entry in BLOCK_LIST:
 			entry = checkValidSeqPin(entry)
 			#play it
-			playPin(pinsArray.get(entry, None))
+			if USER_CARD == "CARD_1":
+				playCardPin(CARD_1_ADDR, pinsArray.get(entry, None))
+			elif USER_CARD == "CARD_2":
+				playCardPin(CARD_2_ADDR, pinsArray.get(entry, None))
+			else:
+				playPin(pinsArray.get(entry, None))
 			time.sleep(MAIN_TIMER)
 #end func
 	
@@ -328,7 +338,8 @@ def callback():
 	status.set("%s", "empty callback")
 #end func
 def callExit():
-	status.set("%s", "exit not implemented")
+	if tkMessageBox.askokcancel("Quit", "Do you really want to quit?"):
+		root.destroy()
 #end func
 def helpDialog():
 	status.set("%s", "help not implemented")
@@ -351,11 +362,12 @@ class SeqThread(threading.Thread):
 	def run(self):
 		status.set("%s", "seq thread start")
 		global USER_SEQ
-		while RUN_LOOP:
+		while RUN_LOOP:		
 			globals()[USER_SEQ]()
-		
+					
 		status.set("%s", "seq thread end")	
 		return
+		
 #end class
 
 ########### MIDI INPUT CLASS ###########
@@ -514,6 +526,9 @@ class Controls:
 		playSeqButton = Button(
 			frame, text="Play", command=self.goPlaySeq)
 		
+		self.pauseSeqButton = Button(
+			frame, text="pause", command=self.goPauseSeq)
+		
 		timerButton = Button(
 			frame, text="Timer", command=self.goTimer)
 		
@@ -532,7 +547,8 @@ class Controls:
 		
 		self.loopCheck.grid(row=1, column=0, sticky=W)
 		playSeqButton.grid(row=1, column=1)
-		timerButton.grid(row=1, column=2)		
+		self.pauseSeqButton.grid(row=1, column=2)
+		timerButton.grid(row=1, column=3)		
 			
 	def goReset(self):
 		print "reset"
@@ -584,16 +600,29 @@ class Controls:
 		else:
 			print "end SQ thread"
 			return
-	#end func	
+	#end func
+		
 	def goPlaySeq(self):
 		print "play seqName:"
 		print seqName.get()
 		global USER_SEQ
+		global USER_CARD
+		USER_CARD = cardName.get()
 		USER_SEQ = seqName.get()
 		self.sq = SeqThread()
 		self.sq.start()
 		self.checkThreadSQ()
 	#end func
+	
+	def goPauseSeq(self, tog=[0]):
+		#global PAUSE_SEQ
+		tog[0] = not tog[0]
+		if tog[0]:
+			self.pauseSeqButton.config(text='PAUSED')
+			#PAUSE_SEQ = True
+		else:
+			self.pauseSeqButton.config(text='pause')
+			#PAUSE_SEQ = False
 	
 	def goTimer(self):
 		timerDialog = TimerDialog(root)
@@ -610,7 +639,7 @@ class Tracker(Frame):
 			bg="black", scrollregion=(0, 0, 0, 400))
 			
 		#left,top,right,bottom
-		self.highlighter = self.canvas.create_rectangle(0,5,500,19, 
+		self.playhead = self.canvas.create_rectangle(0,5,500,19, 
 			fill="#5c5c5c")
 			
 		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
@@ -623,9 +652,12 @@ class Tracker(Frame):
 		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")		
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
 			font=self.vFont, fill="green")			
-		self.fontHeight = self.vFont.metrics("linespace")
-		
+		self.fontHeight = self.vFont.metrics("linespace")		
 		self.canvas.itemconfig(self.canvasTextID, text="noob tracker")
+		
+		self.canvas.bind("<Double-Button-1>", self.set_focus)
+		self.canvas.bind("<Button-1>", self.set_cursor)
+		self.canvas.bind("<Key>",self.handle_key)
 	
 	def __call__(self, format, *args):
 		#self.label.config(text=format % args)
@@ -648,13 +680,91 @@ class Tracker(Frame):
 		self.canvas.dchars(self.canvasTextID, 0, END)
 		self.canvas.update_idletasks()
 		
-	def highlight(self, lineNum):
+	def movePlayhead(self, lineNum):
 		# account for font y offset from top
 		startY = (lineNum * self.fontHeight) + 5
 		endY = startY + self.fontHeight
-		self.canvas.coords(self.highlighter, 0, startY, 500, endY)
+		self.canvas.coords(self.playhead, 0, startY, 500, endY)
 		# move scrollbar
 		self.canvas.yview_moveto(lineNum * self.moveFraction)
+		
+	#editing functions
+	def highlight(self, item):
+		bbox = self.canvas.bbox(item)
+		self.canvas.delete("highlight")
+		if bbox:
+			i = self.canvas.create_rectangle(
+				bbox, fill="#ffff66",
+				tag="highlight")
+			self.canvas.lower(i, item)
+	
+	def has_focus(self):
+		return self.canvas.focus()
+		
+	def has_selection(self):
+		return self.canvas.tk.call(self.canvas._w, 'select', 'item')
+		
+	def set_focus(self, event):
+		if self.canvas.type(CURRENT) != "text":
+			return
+			
+		self.highlight(CURRENT)
+		self.canvas.focus_set()
+		self.canvas.focus(CURRENT)
+		self.canvas.select_from(CURRENT, 0)
+		self.canvas.select_to(CURRENT, END)
+		
+	def set_cursor(self, event):
+		item = self.has_focus()
+		if not item:
+			return
+			
+		x = self.canvas.canvasx(event.x)
+		y = self.canvas.canvasy(event.y)
+		self.canvas.icursor(item, "@%d,%d" % (x, y))
+		self.canvas.select_clear()
+		
+	def handle_key(self, event):
+		item = self.has_focus()
+		if not item:
+			return
+		
+		insert = self.canvas.index(item, INSERT)
+		#printable char
+		if event.char >= " ":
+			if self.has_selection():
+				self.canvas.dchars(item, SEL_FIRST, SEL_LAST)
+				self.canvas.select_clear()
+			self.canvas.insert(item, "insert", event.char)
+			self.highlight(item)
+		#delete
+		elif event.keysym == "BackSpace":
+			if self.has_selection():
+				self.canvas.dchars(item, SEL_FIRST, SEL_LAST)
+				self.canvas.select_clear()
+			else:
+				if insert > 0:
+					self.canvas.dchars(item, insert-1, insert)
+			self.highlight(item)
+		#nav
+		elif event.keysym == "Home":
+			self.canvas.icursor(item, 0)
+			self.canvas.select_clear()
+		elif event.keysym == "End":
+			self.canvas.icursor(item, END)
+			self.canvas.select_clear()
+		elif event.keysym == "Right":
+			self.canvas.icursor(item, insert+1)
+			self.canvas.select_clear()
+		elif event.keysym == "Left":
+			self.canvas.icursor(item, insert-1)
+			self.canvas.select_clear()
+		#end editing
+		elif event.keysym == "Escape":
+			self.highlight(root)
+			root.focus()
+		else:
+			pass
 		
 #end class
 
