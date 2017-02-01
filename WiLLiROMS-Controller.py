@@ -5,19 +5,20 @@
 # using python -V 2.7.3
 #
 # NOTES:
-# -must use 0x00 and 0x23 as note off or next note can fail to trigger
-# -included 0x00 in playPin() prior to pinHex trigger
-# -use None as a sustain in blocks, playPin() will skip it
-# -midi listener is on separate thread
-# -midi switchable to single card or all cards
-# -new sequencer file format for multiple cards
-# -tracker canvas enabled with playhead
-# -blockPlay user card switcher
-# -edit tracker window clunky, not yet affecting played sequence
+# -0x00 and 0x23 as note off equiv '0' in sequences/blocks
+# -use None ( 'n' ) as a skip in sequences/blocks
+# -sequencer file format different from blocks
+# -sequence tracker with playhead
+# -card switcher for midi and block player
+# -block save as file name
 #
 # TODO
+# - card switcher separate for midi AND block play
+# - allow for only one card attached
+# - proper exit method with checks for threads to close, file saves etc
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
+# - make tracker editable, tracker slider for blocks needs to lengthen
 # - CC messages - all CCs trig pin 1 every data send tick
 # - rom12.716 organ trigger ?
 # - pinX[1] as CC or volume pot per card via pwm
@@ -26,6 +27,7 @@
 from Tkinter import *
 import tkSimpleDialog
 from tkFileDialog import askopenfilename
+from tkFileDialog import asksaveasfilename
 import tkFont
 import tkMessageBox
 import smbus
@@ -48,6 +50,7 @@ USER_SEQ = ""
 USER_CARD = ""
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
+BLOCK_LINE_COUNTER = 0
 
 
 #multi pins in order
@@ -137,6 +140,7 @@ def updateTimer(userTime):
 
 ############## FILE PLAY ################
 def trackerSeqFileFormat(lineNum, line):
+	#needs to account for no card2 values...(seres of 'n'?)
 	carded = line.split("|")
 	card1 = carded[0].split(",")
 	card2 = carded[1].split(",")
@@ -238,9 +242,13 @@ def createBlock(result):
 		return
 	else:	
 		#make into list
+		global BLOCK_LINE_COUNTER
 		global BLOCK_LIST
 		BLOCK_LIST = result.split(',')
-		print BLOCK_LIST	
+		tracker.set(BLOCK_LIST)
+		BLOCK_LINE_COUNTER += 1
+		tracker.movePlayhead(BLOCK_LINE_COUNTER)
+		#advance playhead here to make sense visually	
 	
 def blockPlay():
 	# check if have a list or suffer
@@ -318,7 +326,15 @@ def saveBlock():
 		status.set("%s", "no block data to save")
 		return
 	else:
-		file_ = open('BlockSave.txt', 'w')		
+		#file_ = open('BlockSave.txt', 'w')
+		filename = asksaveasfilename(
+			defaultextension=".txt", 
+			initialfile="BlockSave.txt")
+			
+		if filename is None:
+			return
+		else:
+			file_ = open(filename, 'w')		
 		counter = 0			
 		for entry in BLOCK_LIST:
 			#catch last line here
@@ -456,7 +472,7 @@ class AboutDialog(tkSimpleDialog.Dialog):
 	
 class CreateDialog(tkSimpleDialog.Dialog):	
 	def body(self, master):
-		Label(master, text="card 1:").grid(row=0, sticky=W)
+		Label(master, text="block:").grid(row=0, sticky=W)
 		self.entry1 = Entry(master)
 		
 		global BLOCK_LIST
@@ -513,7 +529,7 @@ class Controls:
 			frame, text="Reset", command=self.goReset)
 		
 		self.midiButton = Button(
-			frame, text="midi OFF", command=self.goMidi)
+			frame, text="midi OFF", fg="black", command=self.goMidi)
 		
 		createButton = Button(
 			frame, text="Create", command=self.goCreate)
@@ -569,14 +585,14 @@ class Controls:
 		global USER_CARD	
 		tog[0] = not tog[0]
 		if tog[0]:
-			self.midiButton.config(text='midi ON_')
+			self.midiButton.config(text='midi ON_', fg="red")
 			MIDI_LISTEN = True
 			USER_CARD = cardName.get()
 			self.mt = MidiThread()
 			self.mt.start()
 			self.checkThreadMT()
 		else:
-			self.midiButton.config(text='midi OFF')
+			self.midiButton.config(text='midi OFF', fg="black")
 			MIDI_LISTEN = False
 	#end func
 	
@@ -635,6 +651,7 @@ class Tracker(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
 		self.seqLength = 0
+		self.moveFraction = 0.017
 		self.canvas = Canvas(self, width=500, height=300,
 			bg="black", scrollregion=(0, 0, 0, 400))
 			
