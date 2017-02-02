@@ -8,9 +8,10 @@
 # -0x00 and 0x23 as note off equiv '0' in sequences/blocks
 # -use None ( 'n' ) as a skip in sequences/blocks
 # -sequencer file format different from blocks
-# -sequence tracker with playhead
+# -sequence tracker reformat due to cpu load
 # -card switcher for midi and block player
 # -block save as file name
+# -7680 @ 0.2 ~= 30 mins
 #
 # TODO
 # - card switcher separate for midi AND block play
@@ -91,10 +92,10 @@ midiPort = 1 # set for MK-425C midi controller
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
-	#zero
+	#zero the pins first
 	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
 	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
-	#play pin 19 as a resetter, no sound
+	#then play pin 19 as a resetter, no sound
 	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x23)
 	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x23)
 	status.set("%s", "stop all")
@@ -108,7 +109,7 @@ def playPin(pinHex):
 	if pinHex is None:
 		return
 	else:
-		#stop all first
+		#zero the pins first
 		bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
 		bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
 		#then play pinHex
@@ -120,7 +121,7 @@ def playCardPin(cardHex, pinHex):
 	if pinHex is None:
 		return
 	else:
-		#stop all first
+		#zero the pins first
 		bus.write_byte_data(cardHex, gpio_register, 0x00)
 		#play pin
 		bus.write_byte_data(cardHex, gpio_register, pinHex)
@@ -139,27 +140,32 @@ def updateTimer(userTime):
 		MAIN_TIMER = userTime
 
 ############## FILE PLAY ################
+def advancePlayhead():
+	#in progress...
+	global BLOCK_LINE_COUNTER
+	BLOCK_LINE_COUNTER += 1
+	tracker.movePlayhead(BLOCK_LINE_COUNTER)
+
 def trackerSeqFileFormat(lineNum, line):
 	#needs to account for no card2 values...(seres of 'n'?)
 	carded = line.split("|")
 	card1 = carded[0].split(",")
 	card2 = carded[1].split(",")
 	printLine = (str(lineNum) + "\t" + card1[0] + "\t" + card1[1] +
-		"\t" + card2[0] + "\t" + card2[1])
-	
+		"\t" + card2[0] + "\t" + card2[1])	
 	tracker.set(printLine)
 
 def trackerSeqFile():
 	global SEQ_FILE_CONTENT
 	lineNum = 1
 	tracker.clear()
-	tracker.set("NUM\tCARD1\tCC\tCARD2\tCC")
+	header.playheadClear()
+	header.playheadLine("\tLOADING SEQUENCE...")
 	for line in SEQ_FILE_CONTENT:		
 		trackerSeqFileFormat(lineNum, line)
 		lineNum += 1
-		
+	header.playheadLine("\t\tREADY"	)
 	tracker.scrollbarSet(lineNum)
-	tracker.highlight(1)
 #end func
 
 def checkValidSeqPin(temp):
@@ -194,7 +200,8 @@ def seqFilePlay():
 			#disregard pinX[1] as reserved for CC, not used yet			
 			playCardPin(CARD_1_ADDR, pinsArray.get(pin1[0], None))
 			playCardPin(CARD_2_ADDR, pinsArray.get(pin2[0], None))
-			tracker.movePlayhead(lineCounter)
+			header.playheadLine("[" + str(lineCounter) + "\t" + str(pin1[0]) +
+				"\t0\t" + str(pin2[0]) + "\t0 ]")
 			lineCounter += 1
 			time.sleep(MAIN_TIMER)
 
@@ -247,8 +254,7 @@ def createBlock(result):
 		BLOCK_LIST = result.split(',')
 		tracker.set(BLOCK_LIST)
 		BLOCK_LINE_COUNTER += 1
-		tracker.movePlayhead(BLOCK_LINE_COUNTER)
-		#advance playhead here to make sense visually	
+		tracker.scrollbarSet(BLOCK_LINE_COUNTER)
 	
 def blockPlay():
 	# check if have a list or suffer
@@ -301,12 +307,16 @@ def newSeq():
 	
 def loadBlock():
 	global BLOCK_LIST
+	global BLOCK_LINE_COUNTER
 	fileName = askopenfilename()
 	with open(fileName) as file:
 		fileContents = file.read()
 		BLOCK_LIST = fileContents.split(',')
 		#file.close()
+	tracker.clear()
 	tracker.set(BLOCK_LIST)
+	BLOCK_LINE_COUNTER += 1
+	tracker.scrollbarSet(BLOCK_LINE_COUNTER)
 	status.set("%s", "file read into block list")
 
 def loadSeqFile():
@@ -553,7 +563,7 @@ class Controls:
 		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
 
 		print "load interface"
-		frame.grid(column=0,row=0)#, columnspan=4, rowspan=4)
+		frame.grid(column=0,row=0)
 		quitButton.grid(row=0, column=0, padx=5, sticky=W)
 		resetButton.grid(row=0, column=1, padx=3)
 		createButton.grid(row=0, column=2, padx=3)
@@ -643,43 +653,63 @@ class Controls:
 	def goTimer(self):
 		timerDialog = TimerDialog(root)
 		updateTimer(timerDialog.userTime)
-		
-			
+					
 #end class	
+
+class Header(Frame):
+	def __init__(self, master):
+		Frame.__init__(self, master)		
+		container = Frame(self, borderwidth=1, relief="sunken")		
+		container.grid(row=0, column=0)#, sticky=NW)		
+		vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
+		
+		self.textHead1 = Text(container, font=vFont, fg="green", bg="black")
+		self.textHead2 = Text(container, font=vFont, fg="green", bg="black")
+		self.textHead1.config(height=2, width=50)
+		self.textHead2.config(height=1, width=50)
+							
+		self.textHead1.insert("1.0", "LINE\tCARD1\tCC\tCARD2\tCC\n")
+		self.textHead1.insert("2.0", "----\t-----\t--\t-----\t--")
+		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  ]")
+		self.textHead1.grid(row=0, column=0)
+		self.textHead2.grid(row=2, column=0)
+		
+	def playheadLine(self, message):
+		#write seq line at self.canvasTextID.line2
+		self.textHead2.delete(1.0, END)
+		self.textHead2.insert(END, message)
+		
+	def playheadClear(self):
+		self.textHead2.delete(1.0, END)
+		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  ]")
+		
 
 class Tracker(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
 		self.seqLength = 0
 		self.moveFraction = 0.017
-		self.canvas = Canvas(self, width=500, height=300,
-			bg="black", scrollregion=(0, 0, 0, 400))
-			
-		#left,top,right,bottom
-		self.playhead = self.canvas.create_rectangle(0,5,500,19, 
-			fill="#5c5c5c")
-			
-		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
-		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
-		self.canvas.config(yscrollcommand=self.yscrollbar.set)
-		self.yscrollbar.config(command=self.canvas.yview)
+		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
+		self.fontHeight = self.vFont.metrics("linespace")	
 		
-		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)	
+		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 400))
+		self.canvas.config(width=400, height=400)
+		self.canvas.grid(row=0, column=0, sticky=NW)
 
-		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")		
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
 			font=self.vFont, fill="green")			
 		self.fontHeight = self.vFont.metrics("linespace")		
 		self.canvas.itemconfig(self.canvasTextID, text="noob tracker")
 		
-		self.canvas.bind("<Double-Button-1>", self.set_focus)
-		self.canvas.bind("<Button-1>", self.set_cursor)
-		self.canvas.bind("<Key>",self.handle_key)
+		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
+		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
+		self.canvas.config(yscrollcommand=self.yscrollbar.set)
+		self.yscrollbar.config(command=self.canvas.yview)		
 	
 	def __call__(self, format, *args):
 		#self.label.config(text=format % args)
 		self.canvas.update_idletasks()
-		
+	
 	def set(self, message):
 		self.canvas.insert(self.canvasTextID, INSERT, message)
 		self.canvas.insert(self.canvasTextID, INSERT, "\n")
@@ -689,100 +719,11 @@ class Tracker(Frame):
 		#account for zero not counted
 		self.seqLength = lineNum + 1
 		self.canvas.config(scrollregion=self.canvas.bbox(ALL))
-		bounds = self.canvas.bbox(ALL)
-		self.seqHeight = bounds[3] - bounds[1]		
-		self.moveFraction = float(1 / float(self.seqHeight / self.fontHeight))
+		#bounds = self.canvas.bbox(ALL)
 		
 	def clear(self):
 		self.canvas.dchars(self.canvasTextID, 0, END)
 		self.canvas.update_idletasks()
-		
-	def movePlayhead(self, lineNum):
-		# account for font y offset from top
-		startY = (lineNum * self.fontHeight) + 5
-		endY = startY + self.fontHeight
-		self.canvas.coords(self.playhead, 0, startY, 500, endY)
-		# move scrollbar
-		self.canvas.yview_moveto(lineNum * self.moveFraction)
-		
-	#editing functions
-	def highlight(self, item):
-		bbox = self.canvas.bbox(item)
-		self.canvas.delete("highlight")
-		if bbox:
-			i = self.canvas.create_rectangle(
-				bbox, fill="#ffff66",
-				tag="highlight")
-			self.canvas.lower(i, item)
-	
-	def has_focus(self):
-		return self.canvas.focus()
-		
-	def has_selection(self):
-		return self.canvas.tk.call(self.canvas._w, 'select', 'item')
-		
-	def set_focus(self, event):
-		if self.canvas.type(CURRENT) != "text":
-			return
-			
-		self.highlight(CURRENT)
-		self.canvas.focus_set()
-		self.canvas.focus(CURRENT)
-		self.canvas.select_from(CURRENT, 0)
-		self.canvas.select_to(CURRENT, END)
-		
-	def set_cursor(self, event):
-		item = self.has_focus()
-		if not item:
-			return
-			
-		x = self.canvas.canvasx(event.x)
-		y = self.canvas.canvasy(event.y)
-		self.canvas.icursor(item, "@%d,%d" % (x, y))
-		self.canvas.select_clear()
-		
-	def handle_key(self, event):
-		item = self.has_focus()
-		if not item:
-			return
-		
-		insert = self.canvas.index(item, INSERT)
-		#printable char
-		if event.char >= " ":
-			if self.has_selection():
-				self.canvas.dchars(item, SEL_FIRST, SEL_LAST)
-				self.canvas.select_clear()
-			self.canvas.insert(item, "insert", event.char)
-			self.highlight(item)
-		#delete
-		elif event.keysym == "BackSpace":
-			if self.has_selection():
-				self.canvas.dchars(item, SEL_FIRST, SEL_LAST)
-				self.canvas.select_clear()
-			else:
-				if insert > 0:
-					self.canvas.dchars(item, insert-1, insert)
-			self.highlight(item)
-		#nav
-		elif event.keysym == "Home":
-			self.canvas.icursor(item, 0)
-			self.canvas.select_clear()
-		elif event.keysym == "End":
-			self.canvas.icursor(item, END)
-			self.canvas.select_clear()
-		elif event.keysym == "Right":
-			self.canvas.icursor(item, insert+1)
-			self.canvas.select_clear()
-		elif event.keysym == "Left":
-			self.canvas.icursor(item, insert-1)
-			self.canvas.select_clear()
-		#end editing
-		elif event.keysym == "Escape":
-			self.highlight(root)
-			root.focus()
-		else:
-			pass
-		
 #end class
 
 class StatusBar(Frame):
@@ -834,12 +775,14 @@ infomenu.add_command(label="Help", command=helpDialog)
 infomenu.add_command(label="About", command=aboutDialog)
 
 #tracker view
+header = Header(root)
+header.grid(row=2, column=0, columnspan=6)
 tracker = Tracker(root)
-tracker.grid(row=2, column=0, columnspan=6)
+tracker.grid(row=3, column=0, columnspan=6)
 
 #statusbar
 status = StatusBar(root)
-status.grid(row=3, column=0, columnspan=6, sticky=NW)
+status.grid(row=4, column=0, columnspan=6, sticky=NW)
 status.set("%s", "ready")
 
 root.mainloop()
