@@ -16,7 +16,6 @@
 # TODO
 # - card switcher separate for midi AND block play
 # - allow for only one card attached
-# - proper exit method with checks for threads to close, file saves etc
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
 # - make tracker editable, tracker slider for blocks needs to lengthen
@@ -35,6 +34,7 @@ import smbus
 import time
 from rtmidi.midiutil import open_midiport
 import threading
+from os import path
 
 #GLOBALS
 CARD_1_ADDR = 0x20
@@ -42,7 +42,7 @@ CARD_2_ADDR = 0x21
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
-MAIN_TIMER = 0.2
+MAIN_TIMER = 0.225
 MIDI_LISTEN = False
 
 CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2"]
@@ -51,6 +51,8 @@ USER_SEQ = ""
 USER_CARD = ""
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
+SEQ_FILE_NAME = ""
+SEQ_FILE_SIZE = 0
 BLOCK_LINE_COUNTER = 0
 
 
@@ -140,12 +142,6 @@ def updateTimer(userTime):
 		MAIN_TIMER = userTime
 
 ############## FILE PLAY ################
-def advancePlayhead():
-	#in progress...
-	global BLOCK_LINE_COUNTER
-	BLOCK_LINE_COUNTER += 1
-	tracker.movePlayhead(BLOCK_LINE_COUNTER)
-
 def trackerSeqFileFormat(lineNum, line):
 	#needs to account for no card2 values...(seres of 'n'?)
 	carded = line.split("|")
@@ -157,6 +153,7 @@ def trackerSeqFileFormat(lineNum, line):
 
 def trackerSeqFile():
 	global SEQ_FILE_CONTENT
+	global SEQ_FILE_SIZE
 	lineNum = 1
 	tracker.clear()
 	header.playheadClear()
@@ -165,6 +162,8 @@ def trackerSeqFile():
 		trackerSeqFileFormat(lineNum, line)
 		lineNum += 1
 	header.playheadLine("\t\tREADY"	)
+	SEQ_FILE_SIZE = lineNum - 1
+	controls.updateCurrentSeq()
 	tracker.scrollbarSet(lineNum)
 #end func
 
@@ -309,6 +308,8 @@ def loadBlock():
 	global BLOCK_LIST
 	global BLOCK_LINE_COUNTER
 	fileName = askopenfilename()
+	if not fileName:
+		return
 	with open(fileName) as file:
 		fileContents = file.read()
 		BLOCK_LIST = fileContents.split(',')
@@ -321,13 +322,17 @@ def loadBlock():
 
 def loadSeqFile():
 	global SEQ_FILE_CONTENT
+	global SEQ_FILE_NAME
 	fileName = askopenfilename()
+	if not fileName:
+		return
 	with open(fileName) as file:
 		SEQ_FILE_CONTENT = file.readlines()
 	
 	#remove whitespace chars
 	SEQ_FILE_CONTENT = [line.strip() for line in SEQ_FILE_CONTENT]
-	status.set("%s", "seq file read")
+	SEQ_FILE_NAME = path.basename(fileName)
+	status.set("%s", "seq file read: " + SEQ_FILE_NAME)
 	trackerSeqFile()	
 		
 def saveBlock():
@@ -358,13 +363,13 @@ def saveBlock():
 		status.set("%s", "block list saved to file")
 
 def saveSeqFile():
-	status.set("%s", "new not implemented")
+	status.set("%s", "save not implemented")
 
 def callback():
 	status.set("%s", "empty callback")
 #end func
 def callExit():
-	if tkMessageBox.askokcancel("Quit", "Do you really want to quit?"):
+	if tkMessageBox.askokcancel("Quit", "Oh really?"):
 		root.destroy()
 #end func
 def helpDialog():
@@ -524,6 +529,7 @@ class Controls:
 		frame = Frame(master)
 		self.varLoop = IntVar()
 		
+		global SEQ_FILE_SIZE
 		global seqName
 		seqName = StringVar(master)
 		seqName.set(SEQ_LIST[0])
@@ -531,12 +537,9 @@ class Controls:
 		global cardName
 		cardName = StringVar(master)
 		cardName.set(CARD_LIST[0])
-		
-		quitButton = Button(
-			frame, text="QUIT", fg="red", command=frame.quit)
-		
+
 		resetButton = Button(
-			frame, text="Reset", command=self.goReset)
+			frame, text="Reset", fg="red", command=self.goReset)
 		
 		self.midiButton = Button(
 			frame, text="midi OFF", fg="black", command=self.goMidi)
@@ -557,6 +560,9 @@ class Controls:
 		
 		timerButton = Button(
 			frame, text="Timer", command=self.goTimer)
+			
+		self.currentSeqLabel = Label(
+			frame, text="SeqFile : size", fg="blue")
 		
 		cardOptions = apply(OptionMenu, (master, cardName) + tuple(CARD_LIST))
 		
@@ -564,17 +570,17 @@ class Controls:
 
 		print "load interface"
 		frame.grid(column=0,row=0)
-		quitButton.grid(row=0, column=0, padx=5, sticky=W)
-		resetButton.grid(row=0, column=1, padx=3)
-		createButton.grid(row=0, column=2, padx=3)
-		self.midiButton.grid(row=0, column=3, padx=3)
-		cardOptions.grid(row=0, column=4, padx=1, sticky=NW)
-		seqOptions.grid(row=0, column=5, padx=3, sticky=N)
+		resetButton.grid(row=0, column=0, padx=3, sticky=W)
+		createButton.grid(row=0, column=1, padx=3)
+		self.midiButton.grid(row=0, column=2, padx=3)
+		cardOptions.grid(row=0, column=3, padx=1, sticky=NW)
+		seqOptions.grid(row=0, column=4, padx=3, sticky=NW)
 		
 		self.loopCheck.grid(row=1, column=0, sticky=W)
 		playSeqButton.grid(row=1, column=1)
 		self.pauseSeqButton.grid(row=1, column=2)
-		timerButton.grid(row=1, column=3)		
+		timerButton.grid(row=1, column=3)
+		self.currentSeqLabel.grid(row=1, column=4, padx=10)		
 			
 	def goReset(self):
 		print "reset"
@@ -653,7 +659,11 @@ class Controls:
 	def goTimer(self):
 		timerDialog = TimerDialog(root)
 		updateTimer(timerDialog.userTime)
-					
+				
+	def updateCurrentSeq(self):
+		global SEQ_FILE_NAME
+		global SEQ_FILE_SIZE
+		self.currentSeqLabel.config(text=SEQ_FILE_NAME + " : " + str(SEQ_FILE_SIZE))	
 #end class	
 
 class Header(Frame):
@@ -675,7 +685,6 @@ class Header(Frame):
 		self.textHead2.grid(row=2, column=0)
 		
 	def playheadLine(self, message):
-		#write seq line at self.canvasTextID.line2
 		self.textHead2.delete(1.0, END)
 		self.textHead2.insert(END, message)
 		
@@ -699,7 +708,7 @@ class Tracker(Frame):
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
 			font=self.vFont, fill="green")			
 		self.fontHeight = self.vFont.metrics("linespace")		
-		self.canvas.itemconfig(self.canvasTextID, text="noob tracker")
+		self.canvas.itemconfig(self.canvasTextID, text="non tracker")
 		
 		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
 		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
@@ -707,7 +716,6 @@ class Tracker(Frame):
 		self.yscrollbar.config(command=self.canvas.yview)		
 	
 	def __call__(self, format, *args):
-		#self.label.config(text=format % args)
 		self.canvas.update_idletasks()
 	
 	def set(self, message):
@@ -786,4 +794,3 @@ status.grid(row=4, column=0, columnspan=6, sticky=NW)
 status.set("%s", "ready")
 
 root.mainloop()
-root.destroy()
