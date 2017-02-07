@@ -1,5 +1,6 @@
 # WiLL-i-ROMS-Controller
-# version 1.0
+# version 1.0 Square Worker mod
+#
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboard
 # using python -V 2.7.3
@@ -42,7 +43,7 @@ CARD_2_ADDR = 0x21
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
-MAIN_TIMER = 0.225
+MAIN_TIMER = 0.8
 MIDI_LISTEN = False
 
 CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2"]
@@ -532,7 +533,7 @@ class Controls:
 		global SEQ_FILE_SIZE
 		global seqName
 		seqName = StringVar(master)
-		seqName.set(SEQ_LIST[0])
+		seqName.set(SEQ_LIST[2])
 		
 		global cardName
 		cardName = StringVar(master)
