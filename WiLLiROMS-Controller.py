@@ -6,13 +6,7 @@
 # using python -V 2.7.3
 #
 # NOTES:
-# -0x00 and 0x23 as note off equiv '0' in sequences/blocks
-# -use None ( 'n' ) as a skip in sequences/blocks
 # -sequencer file format different from blocks
-# -sequence tracker reformat due to cpu load
-# -card switcher for midi and block player
-# -block save as file name
-# -7680 @ 0.2 ~= 30 mins
 #
 # TODO
 # - card switcher separate for midi AND block play
@@ -515,11 +509,29 @@ class TimerDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="range:1.0 - 0.1").grid(row=0,sticky=W)
 		self.entryTimer = Entry(master)
+		self.TIMES = [0.8, 0.7, 0.6, 0.5 ,0.4, 0.3, 0.2, 0.15]
+		self.radioTime = DoubleVar()
 		
 		global MAIN_TIMER
 		self.entryTimer.insert(END, MAIN_TIMER)
 		self.entryTimer.grid(row=0, column=1)
+		
+		#radio buttons for mouse only control, bit OTT
+		counter = 1
+		for timeChoice in self.TIMES:
+			rbname = "rb" + str(counter)
+			self.rbname = Radiobutton(master, text=str(timeChoice),
+				variable=self.radioTime, value=timeChoice,
+				command=self.updateTime)
+			self.rbname.grid(row=counter, column=0)
+			self.rbname.deselect()
+			counter+=1
+		
 		return self.entryTimer #focus
+	
+	def updateTime(self):
+		self.entryTimer.delete(0,END)
+		self.entryTimer.insert(0, self.radioTime.get())
 		
 	def apply(self):
 		self.userTime = float(self.entryTimer.get())
@@ -659,7 +671,11 @@ class Controls:
 	
 	def goTimer(self):
 		timerDialog = TimerDialog(root)
-		updateTimer(timerDialog.userTime)
+		try:
+			if timerDialog.userTime:
+				updateTimer(timerDialog.userTime)
+		except:
+			return
 				
 	def updateCurrentSeq(self):
 		global SEQ_FILE_NAME
