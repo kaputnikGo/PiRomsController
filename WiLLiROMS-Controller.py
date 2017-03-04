@@ -1,14 +1,18 @@
 # WiLL-i-ROMS-Controller
-# version 1.0 Square Worker mod
+# version 1.1 multicard version
 #
 #
-# raspPi -> mcp23008 -> CD4066B -> Soundboard
+# raspPi -> mcp23008 -> CD4066B -> Soundboards
 # using python -V 2.7.3
 #
 # NOTES:
 # -sequencer file format different from blocks
+# -sound card(s) enumeration
 #
 # TODO
+# - CARD_ENUM at init to populate, account for a CARD to be missing
+# - blockPlay and midiToPins require CARD_ENUM
+
 # - card switcher separate for midi AND block play
 # - allow for only one card attached
 # - pause seq button, then it resumes..
@@ -34,13 +38,15 @@ from os import path
 #GLOBALS
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
+CARD_3_ADDR = 0x22
+CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR]
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
 MAIN_TIMER = 0.8
 MIDI_LISTEN = False
 
-CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2"]
+CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2", "CARD_3"]
 SEQ_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
 USER_SEQ = ""
 USER_CARD = ""
@@ -82,19 +88,22 @@ bus = smbus.SMBus(1)
 iodir_register = 0x00
 gpio_register = 0x09
 #enable as output
-bus.write_byte_data(CARD_1_ADDR, iodir_register, 0x00)
-bus.write_byte_data(CARD_2_ADDR, iodir_register, 0x00)
+for card in CARD_ENUM:
+	print("Card: " + str("0x%x" % card))
+	bus.write_byte_data(card, iodir_register, 0x00)
+
 midiPort = 1 # set for MK-425C midi controller
 	
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
 	#zero the pins first
-	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
-	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
-	#then play pin 19 as a resetter, no sound
-	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x23)
-	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x23)
+	#then play pin 19 (0x23) as a resetter, no sound
+	global CARD_ENUM
+	for card in CARD_ENUM:
+		bus.write_byte_data(card, gpio_register, 0x00)
+		bus.write_byte_data(card, gpio_register, 0x23)
+
 	status.set("%s", "stop all")
 	
 def kybdHalt():
@@ -107,11 +116,11 @@ def playPin(pinHex):
 		return
 	else:
 		#zero the pins first
-		bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x00)
-		bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x00)
 		#then play pinHex
-		bus.write_byte_data(CARD_1_ADDR, gpio_register, pinHex)
-		bus.write_byte_data(CARD_2_ADDR, gpio_register, pinHex)
+		global CARD_ENUM
+		for card in CARD_ENUM:
+			bus.write_byte_data(card, gpio_register, 0x00)
+			bus.write_byte_data(card, gpio_register, pinHex)
 		#status.set("%s %d", "play pinHex: ", pinHex)
 		
 def playCardPin(cardHex, pinHex):
@@ -138,12 +147,17 @@ def updateTimer(userTime):
 
 ############## FILE PLAY ################
 def trackerSeqFileFormat(lineNum, line):
-	#needs to account for no card2 values...(seres of 'n'?)
+	#needs to account for no card values
 	carded = line.split("|")
-	card1 = carded[0].split(",")
-	card2 = carded[1].split(",")
-	printLine = (str(lineNum) + "\t" + card1[0] + "\t" + card1[1] +
-		"\t" + card2[0] + "\t" + card2[1])	
+	numCards = len(carded)
+	if (numCards <= 0):
+		return
+	
+	printLine = (str(lineNum))
+	for i in range(0, numCards):
+		card = carded[i].split(",")
+		printLine += "\t" + card[0] + "\t" + card[1]
+	
 	tracker.set(printLine)
 
 def trackerSeqFile():
@@ -174,8 +188,7 @@ def checkValidSeqPin(temp):
 def seqFilePlay():
 	#have list of seq lines "11,0|1,0" etc
 	global SEQ_FILE_CONTENT
-	global CARD_1_ADDR
-	global CARD_2_ADDR
+	global CARD_ENUM
 	
 	if not SEQ_FILE_CONTENT:
 		status.set("%s", "seq file content empty")
@@ -186,16 +199,17 @@ def seqFilePlay():
 		lineCounter = 1
 		for line in SEQ_FILE_CONTENT:
 			carded = line.split("|")
-			#print carded			
-			pin1 = carded[0].split(",")
-			pin1[0] = checkValidSeqPin(pin1[0])
-			pin2 = carded[1].split(",")
-			pin2[0] = checkValidSeqPin(pin2[0])
-			#disregard pinX[1] as reserved for CC, not used yet			
-			playCardPin(CARD_1_ADDR, pinsArray.get(pin1[0], None))
-			playCardPin(CARD_2_ADDR, pinsArray.get(pin2[0], None))
-			header.playheadLine("[" + str(lineCounter) + "\t" + str(pin1[0]) +
-				"\t0\t" + str(pin2[0]) + "\t0 ]")
+			numCards = len(carded)
+			playheadString = "[" + str(lineCounter)
+			for i in range(0, numCards):
+				pin = carded[i].split(",")
+				pin[0] = checkValidSeqPin(pin[0])
+				#disregard pinX[1] as reserved for CC, not used yet
+				playCardPin(CARD_ENUM[i], pinsArray.get(pin[0], None))
+				playheadString += "\t" + str(pin[0]) + "\t0"
+			
+			playheadString += " ]"
+			header.playheadLine(playheadString)
 			lineCounter += 1
 			time.sleep(MAIN_TIMER)
 
@@ -204,8 +218,11 @@ def seqFilePlay():
 ############## TEST BLOCKS ################
 def oneTest():
 	status.set("%s", "test pin")
-	bus.write_byte_data(CARD_1_ADDR, gpio_register, 0x03)
-	bus.write_byte_data(CARD_2_ADDR, gpio_register, 0x03)
+	global CARD_ENUM
+	for card in CARD_ENUM:
+		bus.write_byte_data(card, gpio_register, 0x00)
+		bus.write_byte_data(card, gpio_register, 0x03)
+
 	time.sleep(TEST_TIMER)
 	stopAll()
 
@@ -270,6 +287,8 @@ def blockPlay():
 				playCardPin(CARD_1_ADDR, pinsArray.get(entry, None))
 			elif USER_CARD == "CARD_2":
 				playCardPin(CARD_2_ADDR, pinsArray.get(entry, None))
+			elif USER_CARD == "CARD_3":
+				playCardPin(CARD_3_ADDR, pinsArray.get(entry, None))
 			else:
 				playPin(pinsArray.get(entry, None))
 			time.sleep(MAIN_TIMER)
@@ -420,6 +439,8 @@ class MidiThread(threading.Thread):
 			playCardPin(CARD_1_ADDR, pinsArray[pinAdjust])
 		elif USER_CARD == "CARD_2":
 			playCardPin(CARD_2_ADDR, pinsArray[pinAdjust])
+		elif USER_CARD == "CARD_3":
+			playCardPin(CARD_3_ADDR, pinsArray[pinAdjust])
 		else:
 			playPin(pinsArray[pinAdjust])
 		
@@ -473,8 +494,8 @@ class MidiThread(threading.Thread):
 class AboutDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
-		Label(master, text="Hex Sequencer version 1").grid(row=1,sticky=W)
-		Label(master, text="(two board testing)").grid(row=2,sticky=W)
+		Label(master, text="Hex Sequencer version 1.1").grid(row=1,sticky=W)
+		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
 		Label(master, text="(tracker type testing)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
 		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
@@ -692,12 +713,11 @@ class Header(Frame):
 		
 		self.textHead1 = Text(container, font=vFont, fg="green", bg="black")
 		self.textHead2 = Text(container, font=vFont, fg="green", bg="black")
-		self.textHead1.config(height=2, width=50)
+		self.textHead1.config(height=1, width=50)
 		self.textHead2.config(height=1, width=50)
 							
-		self.textHead1.insert("1.0", "LINE\tCARD1\tCC\tCARD2\tCC\n")
-		self.textHead1.insert("2.0", "----\t-----\t--\t-----\t--")
-		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  ]")
+		self.textHead1.insert("1.0", "LINE\tCARD1\tCC\tCARD2\tCC\tCARD3\tCC\n")
+		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  \t     \t  ]")
 		self.textHead1.grid(row=0, column=0)
 		self.textHead2.grid(row=2, column=0)
 		
@@ -707,7 +727,7 @@ class Header(Frame):
 		
 	def playheadClear(self):
 		self.textHead2.delete(1.0, END)
-		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  ]")
+		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  \t     \t  ]")
 		
 
 class Tracker(Frame):
