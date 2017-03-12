@@ -1,5 +1,5 @@
 # WiLL-i-ROMS-Controller
-# version 1.1 multicard version
+# version 1.2 multicard version
 #
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboards
@@ -8,10 +8,12 @@
 # NOTES:
 # -sequencer file format different from blocks
 # -sound card(s) enumeration
+# -Card1 CC is timer testing
 #
 # TODO
 # - CARD_ENUM at init to populate, account for a CARD to be missing
 # - blockPlay and midiToPins require CARD_ENUM
+# - reload button to reload current file (when writing via geany)
 
 # - card switcher separate for midi AND block play
 # - allow for only one card attached
@@ -200,15 +202,19 @@ def seqFilePlay():
 		for line in SEQ_FILE_CONTENT:
 			carded = line.split("|")
 			numCards = len(carded)
-			playheadString = "[" + str(lineCounter)
+			playheadString = str(lineCounter)
 			for i in range(0, numCards):
 				pin = carded[i].split(",")
 				pin[0] = checkValidSeqPin(pin[0])
-				#disregard pinX[1] as reserved for CC, not used yet
+				#pin[1] testing for timer
+				if pin[1] != "0":
+					#has a useable string value				
+					#convert and update timer
+					updateTimer(float(pin[1]))
+					
 				playCardPin(CARD_ENUM[i], pinsArray.get(pin[0], None))
 				playheadString += "\t" + str(pin[0]) + "\t0"
 			
-			playheadString += " ]"
 			header.playheadLine(playheadString)
 			lineCounter += 1
 			time.sleep(MAIN_TIMER)
@@ -494,7 +500,7 @@ class MidiThread(threading.Thread):
 class AboutDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
-		Label(master, text="Hex Sequencer version 1.1").grid(row=1,sticky=W)
+		Label(master, text="Hex Sequencer version 1.2").grid(row=1,sticky=W)
 		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
 		Label(master, text="(tracker type testing)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
@@ -717,7 +723,7 @@ class Header(Frame):
 		self.textHead2.config(height=1, width=50)
 							
 		self.textHead1.insert("1.0", "LINE\tCARD1\tCC\tCARD2\tCC\tCARD3\tCC\n")
-		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  \t     \t  ]")
+		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t   ")
 		self.textHead1.grid(row=0, column=0)
 		self.textHead2.grid(row=2, column=0)
 		
@@ -727,7 +733,7 @@ class Header(Frame):
 		
 	def playheadClear(self):
 		self.textHead2.delete(1.0, END)
-		self.textHead2.insert("1.0", "[  \t     \t  \t     \t  \t     \t  ]")
+		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t   ")
 		
 
 class Tracker(Frame):
