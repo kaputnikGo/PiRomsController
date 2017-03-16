@@ -8,7 +8,8 @@
 # NOTES:
 # -sequencer file format different from blocks
 # -sound card(s) enumeration
-# -Card1 CC is timer testing
+# -Card1 CC is now timer CLK
+# - port to C ...
 #
 # TODO
 # - CARD_ENUM at init to populate, account for a CARD to be missing
@@ -16,14 +17,11 @@
 # - reload button to reload current file (when writing via geany)
 
 # - card switcher separate for midi AND block play
-# - allow for only one card attached
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
-# - make tracker editable, tracker slider for blocks needs to lengthen
-# - CC messages - all CCs trig pin 1 every data send tick
+# - CC messages - all midi CCs trig pin 1 every data send tick
 # - rom12.716 organ trigger ?
-# - pinX[1] as CC or volume pot per card via pwm
-# - single,universal pwm addressed to MCP23008->CD4066->card
+# - pinX[1] as volume pot via pwm, or ROM id num ?
 #
 from Tkinter import *
 import tkSimpleDialog
@@ -168,11 +166,11 @@ def trackerSeqFile():
 	lineNum = 1
 	tracker.clear()
 	header.playheadClear()
-	header.playheadLine("\tLOADING SEQUENCE...")
+	header.playheadLine("\t\tLOADING SEQUENCE...")
 	for line in SEQ_FILE_CONTENT:		
 		trackerSeqFileFormat(lineNum, line)
 		lineNum += 1
-	header.playheadLine("\t\tREADY"	)
+	header.playheadLine("\t\t\tREADY"	)
 	SEQ_FILE_SIZE = lineNum - 1
 	controls.updateCurrentSeq()
 	tracker.scrollbarSet(lineNum)
@@ -188,7 +186,7 @@ def checkValidSeqPin(temp):
 	return temp
 	
 def seqFilePlay():
-	#have list of seq lines "11,0|1,0" etc
+	#have list of seq lines "11,0.8|1,0" etc
 	global SEQ_FILE_CONTENT
 	global CARD_ENUM
 	
@@ -722,7 +720,7 @@ class Header(Frame):
 		self.textHead1.config(height=1, width=50)
 		self.textHead2.config(height=1, width=50)
 							
-		self.textHead1.insert("1.0", "LINE\tCARD1\tCC\tCARD2\tCC\tCARD3\tCC\n")
+		self.textHead1.insert("1.0", "LINE\tCARD1\tCLK\tCARD2\tCC\tCARD3\tCC\n")
 		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t   ")
 		self.textHead1.grid(row=0, column=0)
 		self.textHead2.grid(row=2, column=0)
