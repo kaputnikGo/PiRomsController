@@ -1,6 +1,4 @@
 # WiLL-i-ROMS-Controller
-# version 1.2 multicard version
-#
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboards
 # using python -V 2.7.3
@@ -9,13 +7,16 @@
 # -sequencer file format different from blocks
 # -sound card(s) enumeration
 # -Card1 CC is now timer CLK
-# - port to C ...
+# -sped up seq loading into tracker to near instant
+# -card selector now to dialog
 #
 # TODO
 # - CARD_ENUM at init to populate, account for a CARD to be missing
-# - blockPlay and midiToPins require CARD_ENUM
+# - blockPlay and midiToPins require CARD_ENUM, card switches popup
 # - reload button to reload current file (when writing via geany)
 
+# - possible auto load sequential seqs (numbered) as load is instant
+# - tracker playhead may be quicker now... reinstate?
 # - card switcher separate for midi AND block play
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
@@ -36,6 +37,7 @@ import threading
 from os import path
 
 #GLOBALS
+VERSION = "1.2.2"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
@@ -97,8 +99,7 @@ midiPort = 1 # set for MK-425C midi controller
 	
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
-	#zero the pins first
-	#then play pin 19 (0x23) as a resetter, no sound
+	#must zero the pins first, pin 19 (0x23) as RESET
 	global CARD_ENUM
 	for card in CARD_ENUM:
 		bus.write_byte_data(card, gpio_register, 0x00)
@@ -115,23 +116,19 @@ def playPin(pinHex):
 	if pinHex is None:
 		return
 	else:
-		#zero the pins first
-		#then play pinHex
+		#must zero the pins first
 		global CARD_ENUM
 		for card in CARD_ENUM:
 			bus.write_byte_data(card, gpio_register, 0x00)
 			bus.write_byte_data(card, gpio_register, pinHex)
-		#status.set("%s %d", "play pinHex: ", pinHex)
 		
 def playCardPin(cardHex, pinHex):
 	if pinHex is None:
 		return
 	else:
-		#zero the pins first
+		#must zero the pins first
 		bus.write_byte_data(cardHex, gpio_register, 0x00)
-		#play pin
 		bus.write_byte_data(cardHex, gpio_register, pinHex)
-		#status.set("%s %d %d", "play card,pinHex: ", cardHex, pinHex)
 		
 def updateTimer(userTime):
 	status.set("%s %s", "timer update: ", userTime)
@@ -145,6 +142,14 @@ def updateTimer(userTime):
 		global MAIN_TIMER
 		MAIN_TIMER = userTime
 
+def updateCard(userCard):
+	status.set("%s %s", "card select: ", userCard)
+	if not userCard:
+		return
+	else:
+		global USER_CARD
+		USER_CARD = userCard
+
 ############## FILE PLAY ################
 def trackerSeqFileFormat(lineNum, line):
 	#needs to account for no card values
@@ -157,22 +162,26 @@ def trackerSeqFileFormat(lineNum, line):
 	for i in range(0, numCards):
 		card = carded[i].split(",")
 		printLine += "\t" + card[0] + "\t" + card[1]
-	
-	tracker.set(printLine)
+		
+	printLine += "\n"
+	return printLine
+
 
 def trackerSeqFile():
 	global SEQ_FILE_CONTENT
 	global SEQ_FILE_SIZE
 	lineNum = 1
+	formattedLines = ""
 	tracker.clear()
 	header.playheadClear()
 	header.playheadLine("\t\tLOADING SEQUENCE...")
 	for line in SEQ_FILE_CONTENT:		
-		trackerSeqFileFormat(lineNum, line)
+		formattedLines += trackerSeqFileFormat(lineNum, line)
 		lineNum += 1
 	header.playheadLine("\t\t\tREADY"	)
 	SEQ_FILE_SIZE = lineNum - 1
 	controls.updateCurrentSeq()
+	tracker.set(formattedLines)
 	tracker.scrollbarSet(lineNum)
 #end func
 
@@ -497,10 +506,11 @@ class MidiThread(threading.Thread):
 ###### INTERFACE CLASSES #######
 class AboutDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
+		global VERSION
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
-		Label(master, text="Hex Sequencer version 1.2").grid(row=1,sticky=W)
+		Label(master, text="Hex Sequencer version " + VERSION).grid(row=1,sticky=W)
 		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
-		Label(master, text="(tracker type testing)").grid(row=3,sticky=W)
+		Label(master, text=" ").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
 		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
 	
@@ -530,6 +540,37 @@ class CreateDialog(tkSimpleDialog.Dialog):
 		self.result = self.entry1.get()
 #end class
 
+class CardDialog(tkSimpleDialog.Dialog):
+	def body(self, master):
+		Label(master, text="card selector").grid(row=0,sticky=W)
+		self.entryCard = Entry(master)		
+		global CARD_LIST
+		global USER_CARD
+		self.radioCard = StringVar()
+		
+		self.entryCard.insert(END, USER_CARD)
+		self.entryCard.grid(row=0, column=1)
+		
+		counter = 1
+		for cardChoice in CARD_LIST:
+			rbname = "rb" + str(counter)
+			self.rbname = Radiobutton(master, text=cardChoice,
+				variable=self.radioCard, value=cardChoice,
+				command=self.updateCard)
+			self.rbname.grid(row=counter, column=0)
+			if cardChoice == USER_CARD:
+				self.rbname.select()
+			else:
+				self.rbname.deselect()
+			counter+=1
+	
+	def updateCard(self):
+		self.entryCard.delete(0,END)
+		self.entryCard.insert(0, self.radioCard.get())
+	
+	def apply(self):
+		self.userCard = self.entryCard.get()	
+
 class TimerDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="range:1.0 - 0.1").grid(row=0,sticky=W)
@@ -549,7 +590,10 @@ class TimerDialog(tkSimpleDialog.Dialog):
 				variable=self.radioTime, value=timeChoice,
 				command=self.updateTime)
 			self.rbname.grid(row=counter, column=0)
-			self.rbname.deselect()
+			if timeChoice == MAIN_TIMER:
+				self.rbname.select()
+			else:
+				self.rbname.deselect()		
 			counter+=1
 		
 		return self.entryTimer #focus
@@ -572,9 +616,9 @@ class Controls:
 		seqName = StringVar(master)
 		seqName.set(SEQ_LIST[2])
 		
-		global cardName
-		cardName = StringVar(master)
-		cardName.set(CARD_LIST[0])
+		global USER_CARD
+		global CARD_LIST
+		USER_CARD = CARD_LIST[0]
 
 		resetButton = Button(
 			frame, text="Reset", fg="red", command=self.goReset)
@@ -602,8 +646,9 @@ class Controls:
 		self.currentSeqLabel = Label(
 			frame, text="SeqFile : size", fg="blue")
 		
-		cardOptions = apply(OptionMenu, (master, cardName) + tuple(CARD_LIST))
-		
+		self.cardButton = Button(
+			frame, text=USER_CARD, command=self.goCard)
+			
 		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
 
 		print "load interface"
@@ -611,7 +656,7 @@ class Controls:
 		resetButton.grid(row=0, column=0, padx=3, sticky=W)
 		createButton.grid(row=0, column=1, padx=3)
 		self.midiButton.grid(row=0, column=2, padx=3)
-		cardOptions.grid(row=0, column=3, padx=1, sticky=NW)
+		self.cardButton.grid(row=0, column=3, padx=1, sticky=NW)
 		seqOptions.grid(row=0, column=4, padx=3, sticky=NW)
 		
 		self.loopCheck.grid(row=1, column=0, sticky=W)
@@ -701,6 +746,15 @@ class Controls:
 				updateTimer(timerDialog.userTime)
 		except:
 			return
+			
+	def goCard(self):
+		cardDialog = CardDialog(root)
+		try:
+			if cardDialog.userCard:
+				updateCard(cardDialog.userCard)
+				self.cardButton.config(text=USER_CARD)
+		except:
+			return
 				
 	def updateCurrentSeq(self):
 		global SEQ_FILE_NAME
@@ -712,7 +766,7 @@ class Header(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)		
 		container = Frame(self, borderwidth=1, relief="sunken")		
-		container.grid(row=0, column=0)#, sticky=NW)		
+		container.grid(row=0, column=0)		
 		vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
 		
 		self.textHead1 = Text(container, font=vFont, fg="green", bg="black")
@@ -796,7 +850,7 @@ class StatusBar(Frame):
 
 ####### MAIN PROGRAM #######
 root = Tk()
-root.title("WiLL-i-ROMS Controller - Hex Sequencer")
+root.title("WiLL-i-ROMS Controller - Hex Sequencer - " + VERSION)
 controls = Controls(root)
 #add menu
 menu = Menu(root)
