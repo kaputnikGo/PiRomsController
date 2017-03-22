@@ -9,6 +9,7 @@
 # -Card1 CC is now timer CLK
 # -sped up seq loading into tracker to near instant
 # -card selector now to dialog
+# -reinstate playheadLine to tracker
 #
 # TODO
 # - CARD_ENUM at init to populate, account for a CARD to be missing
@@ -37,7 +38,7 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.2.2"
+VERSION = "1.3.1"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
@@ -222,6 +223,7 @@ def seqFilePlay():
 				playCardPin(CARD_ENUM[i], pinsArray.get(pin[0], None))
 				playheadString += "\t" + str(pin[0]) + "\t0"
 			
+			tracker.movePlayhead(lineCounter - 1)
 			header.playheadLine(playheadString)
 			lineCounter += 1
 			time.sleep(MAIN_TIMER)
@@ -278,6 +280,7 @@ def createBlock(result):
 		BLOCK_LIST = result.split(',')
 		tracker.set(BLOCK_LIST)
 		BLOCK_LINE_COUNTER += 1
+		tracker.movePlayhead(BLOCK_LINE_COUNTER)
 		tracker.scrollbarSet(BLOCK_LINE_COUNTER)
 	
 def blockPlay():
@@ -510,7 +513,7 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
 		Label(master, text="Hex Sequencer version " + VERSION).grid(row=1,sticky=W)
 		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
-		Label(master, text=" ").grid(row=3,sticky=W)
+		Label(master, text="(tracker testing)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
 		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
 	
@@ -721,8 +724,6 @@ class Controls:
 		print "play seqName:"
 		print seqName.get()
 		global USER_SEQ
-		global USER_CARD
-		USER_CARD = cardName.get()
 		USER_SEQ = seqName.get()
 		self.sq = SeqThread()
 		self.sq.start()
@@ -764,20 +765,22 @@ class Controls:
 
 class Header(Frame):
 	def __init__(self, master):
-		Frame.__init__(self, master)		
-		container = Frame(self, borderwidth=1, relief="sunken")		
-		container.grid(row=0, column=0)		
+		Frame.__init__(self, master)
+		self.canvas = Canvas(self, width=500, height=100)
+		#container = Frame(self, borderwidth=1, relief="sunken")	
+		#container.grid(row=0, column=0)
+		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
+				
 		vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
-		
-		self.textHead1 = Text(container, font=vFont, fg="green", bg="black")
-		self.textHead2 = Text(container, font=vFont, fg="green", bg="black")
-		self.textHead1.config(height=1, width=50)
-		self.textHead2.config(height=1, width=50)
+		self.textHead1 = Text(self.canvas, font=vFont, fg="green", bg="black")
+		self.textHead2 = Text(self.canvas, font=vFont, fg="green", bg="black")
+		self.textHead1.config(height=1, width=67)
+		self.textHead2.config(height=1, width=67)
 							
-		self.textHead1.insert("1.0", "LINE\tCARD1\tCLK\tCARD2\tCC\tCARD3\tCC\n")
-		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t   ")
-		self.textHead1.grid(row=0, column=0)
-		self.textHead2.grid(row=2, column=0)
+		self.textHead1.insert("1.0", "LINE\tCARD1\tCLK\tCARD2\tCC\tCARD3\tCC\tCARD4\tCC\n")
+		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t   ")
+		self.textHead1.grid(row=0, column=0, columnspan=6)
+		self.textHead2.grid(row=2, column=0, columnspan=6)
 		
 	def playheadLine(self, message):
 		self.textHead2.delete(1.0, END)
@@ -785,7 +788,7 @@ class Header(Frame):
 		
 	def playheadClear(self):
 		self.textHead2.delete(1.0, END)
-		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t   ")
+		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t   ")
 		
 
 class Tracker(Frame):
@@ -793,17 +796,31 @@ class Tracker(Frame):
 		Frame.__init__(self, master)
 		self.seqLength = 0
 		self.moveFraction = 0.017
+		#tracker playhead start
+		self.canvas = Canvas(self, width=540, height=300,
+			bg="black", scrollregion=(0, 0, 0, 400))
+			
+		#left,top,right,bottom
+		self.playhead = self.canvas.create_rectangle(0,5,540,19, 
+			fill="#5c5c5c")
+			
+		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
+		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
+		self.canvas.config(yscrollcommand=self.yscrollbar.set)
+		self.yscrollbar.config(command=self.canvas.yview)
+		#tracker playhead end
+		
 		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
 		self.fontHeight = self.vFont.metrics("linespace")	
-		
-		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 400))
-		self.canvas.config(width=400, height=400)
-		self.canvas.grid(row=0, column=0, sticky=NW)
+		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
+		#self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 400))
+		#self.canvas.config(width=400, height=400)
+		#self.canvas.grid(row=0, column=0, sticky=NW)
 
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
 			font=self.vFont, fill="green")			
 		self.fontHeight = self.vFont.metrics("linespace")		
-		self.canvas.itemconfig(self.canvasTextID, text="non tracker")
+		self.canvas.itemconfig(self.canvasTextID, text="noob tracker")
 		
 		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
 		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
@@ -816,6 +833,11 @@ class Tracker(Frame):
 	def set(self, message):
 		self.canvas.insert(self.canvasTextID, INSERT, message)
 		self.canvas.insert(self.canvasTextID, INSERT, "\n")
+		#playhead start
+		bounds = self.canvas.bbox(ALL)
+		self.seqHeight = bounds[3] - bounds[1]		
+		self.moveFraction = float(1 / float(self.seqHeight / self.fontHeight))
+		#playhead end
 		self.canvas.update_idletasks()
 		
 	def scrollbarSet(self, lineNum):
@@ -824,6 +846,14 @@ class Tracker(Frame):
 		self.canvas.config(scrollregion=self.canvas.bbox(ALL))
 		#bounds = self.canvas.bbox(ALL)
 		
+	def movePlayhead(self, lineNum):
+		# account for font y offset from top
+		startY = (lineNum * self.fontHeight) + 5
+		endY = startY + self.fontHeight
+		self.canvas.coords(self.playhead, 0, startY, 500, endY)
+		# move scrollbar
+		self.canvas.yview_moveto(lineNum * self.moveFraction)
+	
 	def clear(self):
 		self.canvas.dchars(self.canvasTextID, 0, END)
 		self.canvas.update_idletasks()
