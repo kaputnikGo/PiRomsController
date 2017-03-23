@@ -8,16 +8,16 @@
 # -sound card(s) enumeration
 # -Card1 CC is now timer CLK
 # -sped up seq loading into tracker to near instant
-# -card selector now to dialog
-# -reinstate playheadLine to tracker
+# -card / seq type selector now to dialog from util menu
 #
 # TODO
+# - add CARD_4
 # - CARD_ENUM at init to populate, account for a CARD to be missing
 # - blockPlay and midiToPins require CARD_ENUM, card switches popup
 # - reload button to reload current file (when writing via geany)
 
 # - possible auto load sequential seqs (numbered) as load is instant
-# - tracker playhead may be quicker now... reinstate?
+# - no tracker playhead - slows down on render
 # - card switcher separate for midi AND block play
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
@@ -38,7 +38,7 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
@@ -50,8 +50,8 @@ MAIN_TIMER = 0.8
 MIDI_LISTEN = False
 
 CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2", "CARD_3"]
-SEQ_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
-USER_SEQ = ""
+SEQ_TYPE_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
+USER_SEQ_TYPE = ""
 USER_CARD = ""
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
@@ -143,7 +143,15 @@ def updateTimer(userTime):
 		global MAIN_TIMER
 		MAIN_TIMER = userTime
 
-def updateCard(userCard):
+def updateSeqType(userSeqType):
+	status.set("%s %s", "seq type select: ", userSeqType)
+	if not userSeqType:
+		return
+	else:
+		global USER_SEQ_TYPE
+		USER_SEQ_TYPE = userSeqType	
+
+def updateUserCard(userCard):
 	status.set("%s %s", "card select: ", userCard)
 	if not userCard:
 		return
@@ -223,7 +231,6 @@ def seqFilePlay():
 				playCardPin(CARD_ENUM[i], pinsArray.get(pin[0], None))
 				playheadString += "\t" + str(pin[0]) + "\t0"
 			
-			tracker.movePlayhead(lineCounter - 1)
 			header.playheadLine(playheadString)
 			lineCounter += 1
 			time.sleep(MAIN_TIMER)
@@ -280,7 +287,6 @@ def createBlock(result):
 		BLOCK_LIST = result.split(',')
 		tracker.set(BLOCK_LIST)
 		BLOCK_LINE_COUNTER += 1
-		tracker.movePlayhead(BLOCK_LINE_COUNTER)
 		tracker.scrollbarSet(BLOCK_LINE_COUNTER)
 	
 def blockPlay():
@@ -402,6 +408,12 @@ def callExit():
 	if tkMessageBox.askokcancel("Quit", "Oh really?"):
 		root.destroy()
 #end func
+def seqTypeSelect():
+	seqTypeDialog = SeqTypeDialog(root)
+		
+def cardSelector():
+	cardDialog = CardDialog(root)
+
 def helpDialog():
 	status.set("%s", "help not implemented")
 	
@@ -416,15 +428,15 @@ class SeqThread(threading.Thread):
 	def __init__(self):
 		threading.Thread.__init__(self)
 		# check or suffer
-		global USER_SEQ
-		if not USER_SEQ:
-			USER_SEQ = globals()["patt1Test"()]()
+		global USER_SEQ_TYPE
+		if not USER_SEQ_TYPE:
+			USER_SEQ_TYPE = globals()["patt1Test"()]()
 		
 	def run(self):
 		status.set("%s", "seq thread start")
-		global USER_SEQ
+		global USER_SEQ_TYPE
 		while RUN_LOOP:		
-			globals()[USER_SEQ]()
+			globals()[USER_SEQ_TYPE]()
 					
 		status.set("%s", "seq thread end")	
 		return
@@ -513,7 +525,7 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
 		Label(master, text="Hex Sequencer version " + VERSION).grid(row=1,sticky=W)
 		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
-		Label(master, text="(tracker testing)").grid(row=3,sticky=W)
+		Label(master, text="(...)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
 		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
 	
@@ -542,6 +554,39 @@ class CreateDialog(tkSimpleDialog.Dialog):
 	def apply(self):
 		self.result = self.entry1.get()
 #end class
+
+class SeqTypeDialog(tkSimpleDialog.Dialog):
+	def body(self, master):
+		Label(master, text="Seq type selector").grid(row=0,sticky=W)
+		self.entrySeq = Entry(master)
+		global SEQ_TYPE_LIST
+		global USER_SEQ_TYPE
+		self.radioSeq = StringVar()
+		
+		self.entrySeq.insert(END, USER_SEQ_TYPE)
+		self.entrySeq.grid(row=0, column=1)
+		
+		counter = 1
+		for seqChoice in SEQ_TYPE_LIST:
+			rbname = "rb" + str(counter)
+			self.rbname = Radiobutton(master, text=seqChoice,
+				variable=self.radioSeq, value=seqChoice,
+				command=self.updateType)
+			self.rbname.grid(row=counter, column=0)
+			if seqChoice == USER_SEQ_TYPE:
+				self.rbname.select()
+			else:
+				self.rbname.deselect()
+			counter+=1
+			
+	def updateType(self):
+		self.entrySeq.delete(0,END)
+		self.entrySeq.insert(0, self.radioSeq.get())
+		
+	def apply(self):
+		self.userSeqType = self.entrySeq.get()
+		if self.userSeqType:
+			updateSeqType(self.userSeqType)
 
 class CardDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
@@ -572,7 +617,9 @@ class CardDialog(tkSimpleDialog.Dialog):
 		self.entryCard.insert(0, self.radioCard.get())
 	
 	def apply(self):
-		self.userCard = self.entryCard.get()	
+		self.userCard = self.entryCard.get()
+		if self.userCard:
+			updateUserCard(self.userCard)	
 
 class TimerDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
@@ -615,9 +662,10 @@ class Controls:
 		self.varLoop = IntVar()
 		
 		global SEQ_FILE_SIZE
-		global seqName
-		seqName = StringVar(master)
-		seqName.set(SEQ_LIST[2])
+
+		global USER_SEQ_TYPE
+		global SEQ_TYPE_LIST
+		USER_SEQ_TYPE = SEQ_TYPE_LIST[2]
 		
 		global USER_CARD
 		global CARD_LIST
@@ -647,26 +695,19 @@ class Controls:
 			frame, text="Timer", command=self.goTimer)
 			
 		self.currentSeqLabel = Label(
-			frame, text="SeqFile : size", fg="blue")
+			frame, width=40, text="SeqFile : size", fg="blue")
 		
-		self.cardButton = Button(
-			frame, text=USER_CARD, command=self.goCard)
-			
-		seqOptions = apply(OptionMenu, (master, seqName) + tuple(SEQ_LIST))
-
 		print "load interface"
 		frame.grid(column=0,row=0)
-		resetButton.grid(row=0, column=0, padx=3, sticky=W)
-		createButton.grid(row=0, column=1, padx=3)
-		self.midiButton.grid(row=0, column=2, padx=3)
-		self.cardButton.grid(row=0, column=3, padx=1, sticky=NW)
-		seqOptions.grid(row=0, column=4, padx=3, sticky=NW)
-		
-		self.loopCheck.grid(row=1, column=0, sticky=W)
-		playSeqButton.grid(row=1, column=1)
-		self.pauseSeqButton.grid(row=1, column=2)
-		timerButton.grid(row=1, column=3)
-		self.currentSeqLabel.grid(row=1, column=4, padx=10)		
+		resetButton.grid(row=0, column=0, sticky=W)
+		createButton.grid(row=0, column=1)
+		self.midiButton.grid(row=0, column=2)
+		timerButton.grid(row=0, column=3)
+		self.pauseSeqButton.grid(row=0, column=4)
+		self.loopCheck.grid(row=0, column=5, padx=5, sticky=E)
+		playSeqButton.grid(row=0, column=6, sticky=E)	
+			
+		self.currentSeqLabel.grid(row=1, column=1, columnspan=5)		
 			
 	def goReset(self):
 		print "reset"
@@ -721,10 +762,6 @@ class Controls:
 	#end func
 		
 	def goPlaySeq(self):
-		print "play seqName:"
-		print seqName.get()
-		global USER_SEQ
-		USER_SEQ = seqName.get()
 		self.sq = SeqThread()
 		self.sq.start()
 		self.checkThreadSQ()
@@ -747,15 +784,6 @@ class Controls:
 				updateTimer(timerDialog.userTime)
 		except:
 			return
-			
-	def goCard(self):
-		cardDialog = CardDialog(root)
-		try:
-			if cardDialog.userCard:
-				updateCard(cardDialog.userCard)
-				self.cardButton.config(text=USER_CARD)
-		except:
-			return
 				
 	def updateCurrentSeq(self):
 		global SEQ_FILE_NAME
@@ -767,8 +795,6 @@ class Header(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
 		self.canvas = Canvas(self, width=500, height=100)
-		#container = Frame(self, borderwidth=1, relief="sunken")	
-		#container.grid(row=0, column=0)
 		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
 				
 		vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
@@ -794,33 +820,19 @@ class Header(Frame):
 class Tracker(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.seqLength = 0
-		self.moveFraction = 0.017
-		#tracker playhead start
-		self.canvas = Canvas(self, width=540, height=300,
-			bg="black", scrollregion=(0, 0, 0, 400))
-			
-		#left,top,right,bottom
-		self.playhead = self.canvas.create_rectangle(0,5,540,19, 
-			fill="#5c5c5c")
-			
-		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
-		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
-		self.canvas.config(yscrollcommand=self.yscrollbar.set)
-		self.yscrollbar.config(command=self.canvas.yview)
-		#tracker playhead end
+		self.seqLength = 0		
+		#self.moveFraction = 0.017
 		
 		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
 		self.fontHeight = self.vFont.metrics("linespace")	
-		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
-		#self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 400))
-		#self.canvas.config(width=400, height=400)
-		#self.canvas.grid(row=0, column=0, sticky=NW)
+		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 400))
+		self.canvas.config(width=540, height=400)
+		self.canvas.grid(row=0, column=0, sticky=NW)
 
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
 			font=self.vFont, fill="green")			
 		self.fontHeight = self.vFont.metrics("linespace")		
-		self.canvas.itemconfig(self.canvasTextID, text="noob tracker")
+		self.canvas.itemconfig(self.canvasTextID, text="non tracker")
 		
 		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
 		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
@@ -833,27 +845,13 @@ class Tracker(Frame):
 	def set(self, message):
 		self.canvas.insert(self.canvasTextID, INSERT, message)
 		self.canvas.insert(self.canvasTextID, INSERT, "\n")
-		#playhead start
-		bounds = self.canvas.bbox(ALL)
-		self.seqHeight = bounds[3] - bounds[1]		
-		self.moveFraction = float(1 / float(self.seqHeight / self.fontHeight))
-		#playhead end
 		self.canvas.update_idletasks()
 		
 	def scrollbarSet(self, lineNum):
 		#account for zero not counted
 		self.seqLength = lineNum + 1
 		self.canvas.config(scrollregion=self.canvas.bbox(ALL))
-		#bounds = self.canvas.bbox(ALL)
 		
-	def movePlayhead(self, lineNum):
-		# account for font y offset from top
-		startY = (lineNum * self.fontHeight) + 5
-		endY = startY + self.fontHeight
-		self.canvas.coords(self.playhead, 0, startY, 500, endY)
-		# move scrollbar
-		self.canvas.yview_moveto(lineNum * self.moveFraction)
-	
 	def clear(self):
 		self.canvas.dchars(self.canvasTextID, 0, END)
 		self.canvas.update_idletasks()
@@ -901,6 +899,10 @@ utilmenu = Menu(menu)
 menu.add_cascade(label="Util", menu=utilmenu)
 utilmenu.add_command(label="Test one pin", command=oneTest)
 utilmenu.add_command(label="Test all pins", command=allTest)
+utilmenu.add_separator()
+utilmenu.add_command(label="Seq type select", command=seqTypeSelect)
+utilmenu.add_separator()
+utilmenu.add_command(label="Card selector", command=cardSelector)
 
 infomenu = Menu(menu)
 menu.add_cascade(label="Info", menu=infomenu)
