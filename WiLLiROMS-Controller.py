@@ -9,12 +9,16 @@
 # -Card1 CC is now timer CLK
 # -sped up seq loading into tracker to near instant
 # -card / seq type selector now to dialog from util menu
+# -adding bit switcher and code clean up
 #
 # TODO
+# - separate this file into multiple class files
+# - add bit switcher panel and card selector for single sound tests
 # - add CARD_4
 # - CARD_ENUM at init to populate, account for a CARD to be missing
 # - blockPlay and midiToPins require CARD_ENUM, card switches popup
 # - reload button to reload current file (when writing via geany)
+# - preview single sound from specific card, multi-tap capable (button)
 
 # - possible auto load sequential seqs (numbered) as load is instant
 # - no tracker playhead - slows down on render
@@ -38,21 +42,24 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.3.2"
+VERSION = "1.4.1"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
-CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR]
+CARD_4_ADDR = 0x23
+CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR]#, CARD_4_ADDR]
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
 MAIN_TIMER = 0.8
 MIDI_LISTEN = False
 
-CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2", "CARD_3"]
+#combine CARD_LIST with CARD_ADDR so enum has both name and address
+CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2", "CARD_3", "CARD_4"]
 SEQ_TYPE_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
 USER_SEQ_TYPE = ""
 USER_CARD = ""
+BIT_LIST = ["000000"]
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
 SEQ_FILE_NAME = ""
@@ -101,9 +108,15 @@ midiPort = 1 # set for MK-425C midi controller
 ###### CONTROL FUNCTIONS #####	
 def stopAll():
 	#must zero the pins first, pin 19 (0x23) as RESET
+	# this pin is not used in some ROMs, instead: 21,22 (0x25, 0x26)
+	# ensure cards 1,2,3 are type 1 with 0x23 reset roms.
+	#need to figure out rom use in card4 
 	global CARD_ENUM
 	for card in CARD_ENUM:
 		bus.write_byte_data(card, gpio_register, 0x00)
+		#if card = CARD_4_ADDR:
+		#	bus.write_byte_data(card, gpio_register, 0x25)
+		#else:
 		bus.write_byte_data(card, gpio_register, 0x23)
 
 	status.set("%s", "stop all")
@@ -276,6 +289,21 @@ def block3():
 #end block3
 
 ############ USER BLOCK ###############
+def getCardAddr(cardName):
+	global CARD_ENUM
+	if not cardName:
+		cardName = "CARD_1"
+
+	if cardName == "CARD_1":
+		return CARD_ENUM[0]
+	elif cardName == "CARD_2":
+		return CARD_ENUM[1]
+	elif cardName == "CARD_3":
+		return CARD_ENUM[2]
+	else:
+		return CARD_ENUM[0]
+	
+	
 def createBlock(result):
 	status.set("%s %s", "create block: ", result)
 	if not result:
@@ -408,6 +436,9 @@ def callExit():
 	if tkMessageBox.askokcancel("Quit", "Oh really?"):
 		root.destroy()
 #end func
+def bitPlayer():
+	bitPlayerDialog = BitPlayerDialog(root)
+	
 def seqTypeSelect():
 	seqTypeDialog = SeqTypeDialog(root)
 		
@@ -460,7 +491,7 @@ class MidiThread(threading.Thread):
 		elif (noteIn >= 67):
 			noteIn = 66
 		
-		# bit clunky
+		# bit clunky, add enum here
 		global USER_CARD	
 		pinAdjust = noteIn - 35
 		if USER_CARD == "CARD_1":
@@ -555,6 +586,77 @@ class CreateDialog(tkSimpleDialog.Dialog):
 		self.result = self.entry1.get()
 #end class
 
+class BitPlayerDialog(tkSimpleDialog.Dialog):
+	def body(self, master):
+		Label(master, text="Bit Switch Player").grid(row=0,sticky=W)
+		#card selector
+		self.entryCard = Entry(master)		
+		global CARD_LIST
+		global USER_CARD
+		self.radioCard = StringVar()
+		
+		self.entryCard.insert(END, USER_CARD)
+		self.entryCard.grid(row=0, column=1)
+		
+		counter = 1
+		for cardChoice in CARD_LIST:
+			rbname = "rb" + str(counter)
+			self.rbname = Radiobutton(master, text=cardChoice,
+				variable=self.radioCard, value=cardChoice,
+				command=self.updateCard)
+			self.rbname.grid(row=counter, column=0)
+			if cardChoice == USER_CARD:
+				self.rbname.select()
+			else:
+				self.rbname.deselect()
+			counter+=1
+		# end card selector
+		
+		#for now, use pinHex array, not bits,
+		#uses hex addr 0x22 etc
+		#bit switches (6 is always 0)
+		#try a text input string first
+		self.BITS = [2,3,4,5,6,7]
+		self.entryBits = Entry(master)
+		self.bitsButton = Button(master, text="Trigger", command=self.trigger)
+		
+		global BIT_LIST
+		global CARD_ENUM
+		if BIT_LIST:
+			counterB = 0
+			entryString = ""
+			for entry in BIT_LIST:
+				if (counter < len(BLOCK_LIST) - 1):
+					entryString += (entry + ",")
+					counter += 1
+				else:
+					entryString += entry
+				
+			self.entryBits.insert(END, entryString)
+			
+		self.entryBits.grid(row=0, column=1)
+		self.bitsButton.grid(row=0, column=2)
+		return self.entryBits #focus
+		
+	def trigger(self):		
+		self.bitsChecked = checkValidSeqPin(self.entryBits.get())
+		#self.userCard = self.entryCard.get()
+		self.cardAddr = getCardAddr(self.entryCard.get())
+		playCardPin(self.cardAddr, pinsArray.get(self.bitsChecked, None))
+		
+	def apply(self):
+		self.result = self.entryBits.get()
+	
+	def updateCard(self):
+		self.entryCard.delete(0,END)
+		self.entryCard.insert(0, self.radioCard.get())
+	
+	def apply(self):
+		self.userCard = self.entryCard.get()
+		if self.userCard:
+			updateUserCard(self.userCard)
+		
+		
 class SeqTypeDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
 		Label(master, text="Seq type selector").grid(row=0,sticky=W)
@@ -730,7 +832,8 @@ class Controls:
 		if tog[0]:
 			self.midiButton.config(text='midi ON_', fg="red")
 			MIDI_LISTEN = True
-			USER_CARD = cardName.get()
+			#USER_CARD = cardName.get()
+			USER_CARD = "CARD_1"
 			self.mt = MidiThread()
 			self.mt.start()
 			self.checkThreadMT()
@@ -899,6 +1002,7 @@ utilmenu = Menu(menu)
 menu.add_cascade(label="Util", menu=utilmenu)
 utilmenu.add_command(label="Test one pin", command=oneTest)
 utilmenu.add_command(label="Test all pins", command=allTest)
+utilmenu.add_command(label="Bit Switch Player", command=bitPlayer)
 utilmenu.add_separator()
 utilmenu.add_command(label="Seq type select", command=seqTypeSelect)
 utilmenu.add_separator()
