@@ -9,12 +9,13 @@
 # -Card1 CC is now timer CLK
 # -sped up seq loading into tracker to near instant
 # -card / seq type selector now to dialog from util menu
-# -adding bit switcher and code clean up
+# -adding bit player and code clean up
+# -added card 4
+# -change block format into seq format
 #
 # TODO
+# - sort out the old block Play code, replace with seq format
 # - separate this file into multiple class files
-# - add bit switcher panel and card selector for single sound tests
-# - add CARD_4
 # - CARD_ENUM at init to populate, account for a CARD to be missing
 # - blockPlay and midiToPins require CARD_ENUM, card switches popup
 # - reload button to reload current file (when writing via geany)
@@ -42,12 +43,12 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
 CARD_4_ADDR = 0x23
-CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR]#, CARD_4_ADDR]
+CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR, CARD_4_ADDR]
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
@@ -56,10 +57,10 @@ MIDI_LISTEN = False
 
 #combine CARD_LIST with CARD_ADDR so enum has both name and address
 CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2", "CARD_3", "CARD_4"]
-SEQ_TYPE_LIST = ["patt1Test", "blockPlay", "seqFilePlay"]
+SEQ_TYPE_LIST = ["patt1Test", "blockSeqPlay", "seqFilePlay"]
 USER_SEQ_TYPE = ""
 USER_CARD = ""
-BIT_LIST = ["000000"]
+BIT_LIST = ["19"]
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
 SEQ_FILE_NAME = ""
@@ -114,10 +115,10 @@ def stopAll():
 	global CARD_ENUM
 	for card in CARD_ENUM:
 		bus.write_byte_data(card, gpio_register, 0x00)
-		#if card = CARD_4_ADDR:
-		#	bus.write_byte_data(card, gpio_register, 0x25)
-		#else:
-		bus.write_byte_data(card, gpio_register, 0x23)
+		if card == CARD_4_ADDR:
+			bus.write_byte_data(card, gpio_register, 0x25)
+		else:
+			bus.write_byte_data(card, gpio_register, 0x23)
 
 	status.set("%s", "stop all")
 	
@@ -300,25 +301,62 @@ def getCardAddr(cardName):
 		return CARD_ENUM[1]
 	elif cardName == "CARD_3":
 		return CARD_ENUM[2]
+	elif cardName == "CARD_4":
+		return CARD_ENUM[3]
 	else:
 		return CARD_ENUM[0]
 	
 	
 def createBlock(result):
-	status.set("%s %s", "create block: ", result)
+	#change to seq format
 	if not result:
 		return
 	else:	
 		#make into list
-		global BLOCK_LINE_COUNTER
+		#global BLOCK_LINE_COUNTER
+		status.set("%s %s", "create block: ", result)
 		global BLOCK_LIST
-		BLOCK_LIST = result.split(',')
+		BLOCK_LIST = result
 		tracker.set(BLOCK_LIST)
-		BLOCK_LINE_COUNTER += 1
-		tracker.scrollbarSet(BLOCK_LINE_COUNTER)
+		#BLOCK_LINE_COUNTER += 1
+		#tracker.scrollbarSet(BLOCK_LINE_COUNTER)
+		
+def blockSeqPlay():
+	global BLOCK_LIST
+	global MAIN_TIMER
+	global CARD_ENUM
+	
+	if not BLOCK_LIST:
+		status.set("%s", "block seq empty")
+		loopCheckControl(0)
+		return
+	else:	
+		status.set("%s", "block seq play")
+		#checks and converts
+		#for line in BLOCK_LIST:
+		lineCounter = 1
+		line = BLOCK_LIST
+		carded = line.split("|")
+		numCards = len(carded)
+		playheadString = str(lineCounter)
+		for i in range(0, numCards):
+			pin = carded[i].split(",")
+			pin[0] = checkValidSeqPin(pin[0])
+			#pin[1] testing for timer
+			if pin[1] != "0":
+				#has a useable string value				
+				#convert and update timer
+				updateTimer(float(pin[1]))
+					
+			playCardPin(CARD_ENUM[i], pinsArray.get(pin[0], None))			
+			playheadString += "\t" + str(pin[0]) + "\t0"
+								
+		header.playheadLine(playheadString)
+		lineCounter+=1
+		time.sleep(MAIN_TIMER)
 	
 def blockPlay():
-	# check if have a list or suffer
+	#change to seq format, single line seq
 	global BLOCK_LIST
 	global MAIN_TIMER
 	global USER_CARD
@@ -333,14 +371,7 @@ def blockPlay():
 		for entry in BLOCK_LIST:
 			entry = checkValidSeqPin(entry)
 			#play it
-			if USER_CARD == "CARD_1":
-				playCardPin(CARD_1_ADDR, pinsArray.get(entry, None))
-			elif USER_CARD == "CARD_2":
-				playCardPin(CARD_2_ADDR, pinsArray.get(entry, None))
-			elif USER_CARD == "CARD_3":
-				playCardPin(CARD_3_ADDR, pinsArray.get(entry, None))
-			else:
-				playPin(pinsArray.get(entry, None))
+			playCardPin(getCardAddr(USER_CARD), pinsArray.get(entry, None))
 			time.sleep(MAIN_TIMER)
 #end func
 	
@@ -369,6 +400,7 @@ def newSeq():
 	status.set("%s", "new not implemented")
 	
 def loadBlock():
+	
 	global BLOCK_LIST
 	global BLOCK_LINE_COUNTER
 	fileName = askopenfilename()
@@ -494,14 +526,7 @@ class MidiThread(threading.Thread):
 		# bit clunky, add enum here
 		global USER_CARD	
 		pinAdjust = noteIn - 35
-		if USER_CARD == "CARD_1":
-			playCardPin(CARD_1_ADDR, pinsArray[pinAdjust])
-		elif USER_CARD == "CARD_2":
-			playCardPin(CARD_2_ADDR, pinsArray[pinAdjust])
-		elif USER_CARD == "CARD_3":
-			playCardPin(CARD_3_ADDR, pinsArray[pinAdjust])
-		else:
-			playPin(pinsArray[pinAdjust])
+		playCardPin(getCardAddr(USER_CARD), pinsArray[pinAdjust])
 		
 	global midiToPinsOff
 	def midiToPinsOff():
@@ -568,14 +593,15 @@ class CreateDialog(tkSimpleDialog.Dialog):
 		
 		global BLOCK_LIST
 		if BLOCK_LIST:
-			counter = 0
+			#counter = 0
 			entryString = ""
 			for entry in BLOCK_LIST:
-				if (counter < len(BLOCK_LIST) - 1):
-					entryString += (entry + ",")
-					counter += 1
-				else:
-					entryString += entry
+				entryString += entry
+				#if (counter < len(BLOCK_LIST) - 1):
+				#	entryString += (entry + ",")
+				#	counter += 1
+				#else:
+				#	entryString += entry
 				
 			self.entry1.insert(END, entryString)
 			
@@ -588,7 +614,7 @@ class CreateDialog(tkSimpleDialog.Dialog):
 
 class BitPlayerDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
-		Label(master, text="Bit Switch Player").grid(row=0,sticky=W)
+		Label(master, text="Bit Player").grid(row=0,sticky=W)
 		#card selector
 		self.entryCard = Entry(master)		
 		global CARD_LIST
@@ -617,9 +643,15 @@ class BitPlayerDialog(tkSimpleDialog.Dialog):
 		#bit switches (6 is always 0)
 		#try a text input string first
 		self.BITS = [2,3,4,5,6,7]
+		self.NUMS = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
+		self.numVar = IntVar(master)
+		self.numVar.set(self.NUMS[1])
+		self.numOptions = OptionMenu(master, self.numVar, *self.NUMS)
 		self.entryBits = Entry(master)
 		self.bitsButton = Button(master, text="Trigger", command=self.trigger)
-		
+		self.stopButton = Button(master, text="Stop", command=self.stopBit)
+		#self.modifyButton = Button(master, text="Modify", command=self.modifyBit)
+		self.numVar.trace('w', self.optionSet)
 		global BIT_LIST
 		global CARD_ENUM
 		if BIT_LIST:
@@ -636,13 +668,26 @@ class BitPlayerDialog(tkSimpleDialog.Dialog):
 			
 		self.entryBits.grid(row=0, column=1)
 		self.bitsButton.grid(row=0, column=2)
+		self.stopButton.grid(row=1, column=2)
+		self.numOptions.grid(row=2, column=1)
 		return self.entryBits #focus
+		
+	def optionSet(self, *args):
+		#get option menu num
+		self.entryBits.delete(0,END)
+		self.entryBits.insert(END, self.numVar.get())
 		
 	def trigger(self):		
 		self.bitsChecked = checkValidSeqPin(self.entryBits.get())
-		#self.userCard = self.entryCard.get()
 		self.cardAddr = getCardAddr(self.entryCard.get())
 		playCardPin(self.cardAddr, pinsArray.get(self.bitsChecked, None))
+		
+	def stopBit(self):
+		stopAll();
+		
+	#def modifyBit(self):
+		#depends on rom, use #17 for Warlok
+		#bus.write_byte_data(CARD_ENUM[3], gpio_register, 0x21)
 		
 	def apply(self):
 		self.result = self.entryBits.get()
@@ -1002,7 +1047,7 @@ utilmenu = Menu(menu)
 menu.add_cascade(label="Util", menu=utilmenu)
 utilmenu.add_command(label="Test one pin", command=oneTest)
 utilmenu.add_command(label="Test all pins", command=allTest)
-utilmenu.add_command(label="Bit Switch Player", command=bitPlayer)
+utilmenu.add_command(label="Bit Player", command=bitPlayer)
 utilmenu.add_separator()
 utilmenu.add_command(label="Seq type select", command=seqTypeSelect)
 utilmenu.add_separator()
