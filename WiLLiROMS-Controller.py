@@ -12,18 +12,16 @@
 # -adding bit player and code clean up
 # -added card 4
 # -change block format into seq format
+# -moved bitPlayer, cardSelect to main screen, removed 2 dialogs
 #
 # TODO
+# - rewrite in C (wiringPi) and GTK+3 (Glade)
 # - sort out the old block Play code, replace with seq format
 # - separate this file into multiple class files
 # - CARD_ENUM at init to populate, account for a CARD to be missing
 # - blockPlay and midiToPins require CARD_ENUM, card switches popup
 # - reload button to reload current file (when writing via geany)
-# - preview single sound from specific card, multi-tap capable (button)
-
 # - possible auto load sequential seqs (numbered) as load is instant
-# - no tracker playhead - slows down on render
-# - card switcher separate for midi AND block play
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
 # - CC messages - all midi CCs trig pin 1 every data send tick
@@ -43,7 +41,7 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
@@ -56,10 +54,10 @@ MAIN_TIMER = 0.8
 MIDI_LISTEN = False
 
 #combine CARD_LIST with CARD_ADDR so enum has both name and address
-CARD_LIST = ["CARD_ALL", "CARD_1", "CARD_2", "CARD_3", "CARD_4"]
+CARD_LIST = ["CARD_1", "CARD_2", "CARD_3", "CARD_4"]
 SEQ_TYPE_LIST = ["patt1Test", "blockSeqPlay", "seqFilePlay"]
 USER_SEQ_TYPE = ""
-USER_CARD = ""
+USER_CARD = "CARD_1"
 BIT_LIST = ["19"]
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
@@ -355,26 +353,6 @@ def blockSeqPlay():
 		lineCounter+=1
 		time.sleep(MAIN_TIMER)
 	
-def blockPlay():
-	#change to seq format, single line seq
-	global BLOCK_LIST
-	global MAIN_TIMER
-	global USER_CARD
-	
-	if not BLOCK_LIST:
-		status.set("%s", "block list empty")
-		loopCheckControl(0)
-		return
-	else:	
-		status.set("%s", "block list play")
-		#checks and converts
-		for entry in BLOCK_LIST:
-			entry = checkValidSeqPin(entry)
-			#play it
-			playCardPin(getCardAddr(USER_CARD), pinsArray.get(entry, None))
-			time.sleep(MAIN_TIMER)
-#end func
-	
 def patt1Test():
 	status.set("%s", "patt1 test")
 	for i in range(0, 1):
@@ -468,14 +446,9 @@ def callExit():
 	if tkMessageBox.askokcancel("Quit", "Oh really?"):
 		root.destroy()
 #end func
-def bitPlayer():
-	bitPlayerDialog = BitPlayerDialog(root)
 	
 def seqTypeSelect():
 	seqTypeDialog = SeqTypeDialog(root)
-		
-def cardSelector():
-	cardDialog = CardDialog(root)
 
 def helpDialog():
 	status.set("%s", "help not implemented")
@@ -581,7 +554,7 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
 		Label(master, text="Hex Sequencer version " + VERSION).grid(row=1,sticky=W)
 		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
-		Label(master, text="(...)").grid(row=3,sticky=W)
+		Label(master, text="(live version)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
 		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
 	
@@ -610,97 +583,7 @@ class CreateDialog(tkSimpleDialog.Dialog):
 		
 	def apply(self):
 		self.result = self.entry1.get()
-#end class
-
-class BitPlayerDialog(tkSimpleDialog.Dialog):
-	def body(self, master):
-		Label(master, text="Bit Player").grid(row=0,sticky=W)
-		#card selector
-		self.entryCard = Entry(master)		
-		global CARD_LIST
-		global USER_CARD
-		self.radioCard = StringVar()
-		
-		self.entryCard.insert(END, USER_CARD)
-		self.entryCard.grid(row=0, column=1)
-		
-		counter = 1
-		for cardChoice in CARD_LIST:
-			rbname = "rb" + str(counter)
-			self.rbname = Radiobutton(master, text=cardChoice,
-				variable=self.radioCard, value=cardChoice,
-				command=self.updateCard)
-			self.rbname.grid(row=counter, column=0)
-			if cardChoice == USER_CARD:
-				self.rbname.select()
-			else:
-				self.rbname.deselect()
-			counter+=1
-		# end card selector
-		
-		#for now, use pinHex array, not bits,
-		#uses hex addr 0x22 etc
-		#bit switches (6 is always 0)
-		#try a text input string first
-		self.BITS = [2,3,4,5,6,7]
-		self.NUMS = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
-		self.numVar = IntVar(master)
-		self.numVar.set(self.NUMS[1])
-		self.numOptions = OptionMenu(master, self.numVar, *self.NUMS)
-		self.entryBits = Entry(master)
-		self.bitsButton = Button(master, text="Trigger", command=self.trigger)
-		self.stopButton = Button(master, text="Stop", command=self.stopBit)
-		#self.modifyButton = Button(master, text="Modify", command=self.modifyBit)
-		self.numVar.trace('w', self.optionSet)
-		global BIT_LIST
-		global CARD_ENUM
-		if BIT_LIST:
-			counterB = 0
-			entryString = ""
-			for entry in BIT_LIST:
-				if (counter < len(BLOCK_LIST) - 1):
-					entryString += (entry + ",")
-					counter += 1
-				else:
-					entryString += entry
-				
-			self.entryBits.insert(END, entryString)
-			
-		self.entryBits.grid(row=0, column=1)
-		self.bitsButton.grid(row=0, column=2)
-		self.stopButton.grid(row=1, column=2)
-		self.numOptions.grid(row=2, column=1)
-		return self.entryBits #focus
-		
-	def optionSet(self, *args):
-		#get option menu num
-		self.entryBits.delete(0,END)
-		self.entryBits.insert(END, self.numVar.get())
-		
-	def trigger(self):		
-		self.bitsChecked = checkValidSeqPin(self.entryBits.get())
-		self.cardAddr = getCardAddr(self.entryCard.get())
-		playCardPin(self.cardAddr, pinsArray.get(self.bitsChecked, None))
-		
-	def stopBit(self):
-		stopAll();
-		
-	#def modifyBit(self):
-		#depends on rom, use #17 for Warlok
-		#bus.write_byte_data(CARD_ENUM[3], gpio_register, 0x21)
-		
-	def apply(self):
-		self.result = self.entryBits.get()
-	
-	def updateCard(self):
-		self.entryCard.delete(0,END)
-		self.entryCard.insert(0, self.radioCard.get())
-	
-	def apply(self):
-		self.userCard = self.entryCard.get()
-		if self.userCard:
-			updateUserCard(self.userCard)
-		
+#end class		
 		
 class SeqTypeDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
@@ -734,39 +617,6 @@ class SeqTypeDialog(tkSimpleDialog.Dialog):
 		self.userSeqType = self.entrySeq.get()
 		if self.userSeqType:
 			updateSeqType(self.userSeqType)
-
-class CardDialog(tkSimpleDialog.Dialog):
-	def body(self, master):
-		Label(master, text="card selector").grid(row=0,sticky=W)
-		self.entryCard = Entry(master)		
-		global CARD_LIST
-		global USER_CARD
-		self.radioCard = StringVar()
-		
-		self.entryCard.insert(END, USER_CARD)
-		self.entryCard.grid(row=0, column=1)
-		
-		counter = 1
-		for cardChoice in CARD_LIST:
-			rbname = "rb" + str(counter)
-			self.rbname = Radiobutton(master, text=cardChoice,
-				variable=self.radioCard, value=cardChoice,
-				command=self.updateCard)
-			self.rbname.grid(row=counter, column=0)
-			if cardChoice == USER_CARD:
-				self.rbname.select()
-			else:
-				self.rbname.deselect()
-			counter+=1
-	
-	def updateCard(self):
-		self.entryCard.delete(0,END)
-		self.entryCard.insert(0, self.radioCard.get())
-	
-	def apply(self):
-		self.userCard = self.entryCard.get()
-		if self.userCard:
-			updateUserCard(self.userCard)	
 
 class TimerDialog(tkSimpleDialog.Dialog):
 	def body(self, master):
@@ -842,19 +692,19 @@ class Controls:
 			frame, text="Timer", command=self.goTimer)
 			
 		self.currentSeqLabel = Label(
-			frame, width=40, text="SeqFile : size", fg="blue")
+			frame, text="SeqFile : size", fg="blue")
 		
 		print "load interface"
-		frame.grid(column=0,row=0)
+		frame.grid(column=0,row=0, columnspan=6)
 		resetButton.grid(row=0, column=0, sticky=W)
 		createButton.grid(row=0, column=1)
 		self.midiButton.grid(row=0, column=2)
 		timerButton.grid(row=0, column=3)
 		self.pauseSeqButton.grid(row=0, column=4)
-		self.loopCheck.grid(row=0, column=5, padx=5, sticky=E)
-		playSeqButton.grid(row=0, column=6, sticky=E)	
+		self.loopCheck.grid(row=0, column=5, padx=5)#, sticky=E)
+		playSeqButton.grid(row=0, column=6)#, sticky=E)	
 			
-		self.currentSeqLabel.grid(row=1, column=1, columnspan=5)		
+		self.currentSeqLabel.grid(row=1, column=0, columnspan=5, sticky=W)		
 			
 	def goReset(self):
 		print "reset"
@@ -872,13 +722,13 @@ class Controls:
 	#end func	
 	def goMidi(self, tog=[0]):
 		global MIDI_LISTEN
-		global USER_CARD	
+		#global USER_CARD	
 		tog[0] = not tog[0]
 		if tog[0]:
 			self.midiButton.config(text='midi ON_', fg="red")
 			MIDI_LISTEN = True
 			#USER_CARD = cardName.get()
-			USER_CARD = "CARD_1"
+			#USER_CARD = "CARD_1"
 			self.mt = MidiThread()
 			self.mt.start()
 			self.checkThreadMT()
@@ -903,7 +753,7 @@ class Controls:
 #playSeq thread, SeqThread(sequence)
 	def checkThreadSQ(self):
 		if self.sq.isAlive():
-			root.after(500, self.checkThreadSQ)
+			root.after(250, self.checkThreadSQ)
 		else:
 			print "end SQ thread"
 			return
@@ -973,8 +823,8 @@ class Tracker(Frame):
 		
 		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
 		self.fontHeight = self.vFont.metrics("linespace")	
-		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 400))
-		self.canvas.config(width=540, height=400)
+		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 100))
+		self.canvas.config(width=540, height=100)
 		self.canvas.grid(row=0, column=0, sticky=NW)
 
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
@@ -1004,6 +854,84 @@ class Tracker(Frame):
 		self.canvas.dchars(self.canvasTextID, 0, END)
 		self.canvas.update_idletasks()
 #end class
+
+class BitPlayer(Frame):
+	def __init__(self, master):
+		Frame.__init__(self, master)
+		self.canvas = Canvas(self, width=540, height=200)
+		self.canvas.grid(row=0, column=0, columnspan=5, rowspan=2, sticky=NW)
+		self.canvas.config(bg="gray44")
+		
+		#card selector
+		self.entryCard = Entry(master)		
+		global CARD_LIST
+		global USER_CARD
+		self.radioCard = StringVar()		
+		self.entryCard.insert(END, USER_CARD)
+		# end card selector
+		
+		#for now use pinHex array, not bits,
+		self.BITS = [2,3,4,5,6,7]
+		self.NUMS = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
+		self.numVar = IntVar(master)
+		self.numVar.set(self.NUMS[1])
+		self.numOptions = OptionMenu(master, self.numVar, *self.NUMS)
+		self.entryBits = Entry(master, width=6)
+		self.bitsButton = Button(master, text="Trigger", command=self.trigger)
+		self.stopButton = Button(master, text="Stop", command=self.stopBit)
+		#self.modifyButton = Button(master, text="Modify", command=self.modifyBit)
+		self.numVar.trace('w', self.optionSet)	
+		self.entryBits.insert(END, self.numVar.get())
+		
+		#display card list
+		counter = 0
+		for cardChoice in CARD_LIST:
+			rbname = "rb" + str(counter)
+			self.rbname = Radiobutton(master, text=cardChoice,
+				variable=self.radioCard, value=cardChoice,
+				command=self.updateCard)
+			#display radio buttons
+			self.rbname.grid(row=4, column=counter)
+			if cardChoice == USER_CARD:
+				self.rbname.select()
+			else:
+				self.rbname.deselect()
+			counter+=1
+		
+		self.entryBits.grid(row=5, column=0)
+		self.numOptions.grid(row=5, column=1)
+		self.bitsButton.grid(row=5, column=2)
+		self.stopButton.grid(row=5, column=3)	
+		#return self.entryBits #focus
+		
+	def optionSet(self, *args):
+		#get option menu num
+		self.entryBits.delete(0,END)
+		self.entryBits.insert(END, self.numVar.get())
+		
+	def trigger(self):		
+		self.bitsChecked = checkValidSeqPin(self.entryBits.get())
+		self.cardAddr = getCardAddr(self.entryCard.get())
+		playCardPin(self.cardAddr, pinsArray.get(self.bitsChecked, None))
+		
+	def stopBit(self):
+		stopAll();
+		
+	#def modifyBit(self):
+		#depends on rom, use #17 for Warlok
+		#bus.write_byte_data(CARD_ENUM[3], gpio_register, 0x21)
+		
+	def apply(self):
+		self.result = self.entryBits.get()
+	
+	def updateCard(self):
+		self.entryCard.delete(0,END)
+		self.entryCard.insert(0, self.radioCard.get())
+	
+	def apply(self):
+		self.userCard = self.entryCard.get()
+		if self.userCard:
+			updateUserCard(self.userCard)
 
 class StatusBar(Frame):
 	def __init__(self, master):
@@ -1047,11 +975,8 @@ utilmenu = Menu(menu)
 menu.add_cascade(label="Util", menu=utilmenu)
 utilmenu.add_command(label="Test one pin", command=oneTest)
 utilmenu.add_command(label="Test all pins", command=allTest)
-utilmenu.add_command(label="Bit Player", command=bitPlayer)
 utilmenu.add_separator()
 utilmenu.add_command(label="Seq type select", command=seqTypeSelect)
-utilmenu.add_separator()
-utilmenu.add_command(label="Card selector", command=cardSelector)
 
 infomenu = Menu(menu)
 menu.add_cascade(label="Info", menu=infomenu)
@@ -1060,13 +985,17 @@ infomenu.add_command(label="About", command=aboutDialog)
 
 #tracker view
 header = Header(root)
-header.grid(row=2, column=0, columnspan=6)
+header.grid(row=2, column=0, columnspan=6, sticky=W)
 tracker = Tracker(root)
-tracker.grid(row=3, column=0, columnspan=6)
+tracker.grid(row=3, column=0, columnspan=6, sticky=W)
+
+#bitPlayer view
+bitPlayer = BitPlayer(root)
+bitPlayer.grid(row=4, column=0,columnspan=6, rowspan=2, sticky=W)
 
 #statusbar
 status = StatusBar(root)
-status.grid(row=4, column=0, columnspan=6, sticky=NW)
+status.grid(row=6, column=0, columnspan=6, sticky=NW)
 status.set("%s", "ready")
 
 root.mainloop()
