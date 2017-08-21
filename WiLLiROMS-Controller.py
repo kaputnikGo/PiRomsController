@@ -13,14 +13,18 @@
 # -added card 4
 # -change block format into seq format
 # -moved bitPlayer, cardSelect to main screen, removed 2 dialogs
+# -added reload seqfile in util menu
+# -Modifier trigger on some roms: 0x17, 0x21, 0x25
 #
 # TODO
+# - 1.4.5 is prep for live, priority additions only
+ 
+# - add a global 'R' for reset in seq, set by rom+card
 # - rewrite in C (wiringPi) and GTK+3 (Glade)
 # - sort out the old block Play code, replace with seq format
 # - separate this file into multiple class files
 # - CARD_ENUM at init to populate, account for a CARD to be missing
 # - blockPlay and midiToPins require CARD_ENUM, card switches popup
-# - reload button to reload current file (when writing via geany)
 # - possible auto load sequential seqs (numbered) as load is instant
 # - pause seq button, then it resumes..
 # - user write/edit/save file sequence
@@ -41,7 +45,7 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.4.3"
+VERSION = "1.4.5"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
@@ -62,34 +66,29 @@ BIT_LIST = ["19"]
 BLOCK_LIST = []
 SEQ_FILE_CONTENT = []
 SEQ_FILE_NAME = ""
+SEQ_FILE_HANDLE = ""
 SEQ_FILE_SIZE = 0
 BLOCK_LINE_COUNTER = 0
 
 
 #multi pins in order
 pinsArray = {
-	0:0x00, 1:0x01, 2:0x02, 3:0x03, 4:0x04, 5:0x05,
-	6:0x06, 7:0x07, 8:0x08, 9:0x09, 10:0x0A, 
-	11:0x0B, 12:0x0C, 13:0x0D, 14:0x0E, 15:0x0F,
-	16:0x20, 17:0x21, 18:0x22, 19:0x23, 20:0x24,
-	21:0x25, 22:0x26, 23:0x27, 24:0x28, 25:0x29,
-	26:0x2A, 27:0x2B, 28:0x2C, 29:0x2D, 30:0x2E,
-	31:0x2F
+	0:0x00, 1:0x01, 2:0x02, 3:0x03, 4:0x04, 5:0x05, 6:0x06, 7:0x07, 
+	8:0x08, 9:0x09, 10:0x0A, 11:0x0B, 12:0x0C, 13:0x0D, 14:0x0E, 15:0x0F,
+	16:0x20, 17:0x21, 18:0x22, 19:0x23, 20:0x24, 21:0x25, 22:0x26, 23:0x27, 
+	24:0x28, 25:0x29, 26:0x2A, 27:0x2B, 28:0x2C, 29:0x2D, 30:0x2E, 31:0x2F
 	}
 #blocks for patt1Test()	
 block1Array = {
-	0:0x01, 1:0x03, 2:0x02, 3:0x00, 
-	4:0x08, 5:0x0B, 6:0x00, 7:0x08
+	0:0x01, 1:0x03, 2:0x02, 3:0x00, 4:0x08, 5:0x0B, 6:0x00, 7:0x08
 	}
 	
 block2Array = {	
-	0:0x0B, 1:0x0B, 2:0x0B, 3:0x0B, 
-	4:0x01, 5:0x0B, 6:0x0B, 7:0x0B
+	0:0x0B, 1:0x0B, 2:0x0B, 3:0x0B, 4:0x01, 5:0x0B, 6:0x0B, 7:0x0B
 	}
 	
 block3Array = {
-	0:0x0C, 1:0x0D, 2:0x20, 3:0x3A, 
-	4:0x0C, 5:0x0D, 6:0x20, 7:0x3A
+	0:0x0C, 1:0x0D, 2:0x20, 3:0x3A, 4:0x0C, 5:0x0D, 6:0x20, 7:0x3A
 	}
 
 ########### INIT ###########
@@ -114,11 +113,26 @@ def stopAll():
 	for card in CARD_ENUM:
 		bus.write_byte_data(card, gpio_register, 0x00)
 		if card == CARD_4_ADDR:
-			bus.write_byte_data(card, gpio_register, 0x25)
+			bus.write_byte_data(card, gpio_register, 0x26)
 		else:
 			bus.write_byte_data(card, gpio_register, 0x23)
 
 	status.set("%s", "stop all")
+	
+def stopCard():
+	#stop bitPlayer card
+	global USER_CARD
+	global CARD_ENUM
+	if USER_CARD is None:
+		return
+	cardEnum = getCardAddr(USER_CARD)
+	bus.write_byte_data(cardEnum, gpio_register, 0x00)
+	
+	if USER_CARD == "CARD_4":
+		bus.write_byte_data(cardEnum, gpio_register, 0x26)
+	else:
+		bus.write_byte_data(cardEnum, gpio_register, 0x23)
+		
 	
 def kybdHalt():
 	status.set("%s", "kybd halt")
@@ -377,8 +391,7 @@ def loopCheckControl(value):
 def newSeq():
 	status.set("%s", "new not implemented")
 	
-def loadBlock():
-	
+def loadBlock():	
 	global BLOCK_LIST
 	global BLOCK_LINE_COUNTER
 	fileName = askopenfilename()
@@ -395,19 +408,29 @@ def loadBlock():
 	status.set("%s", "file read into block list")
 
 def loadSeqFile():
-	global SEQ_FILE_CONTENT
-	global SEQ_FILE_NAME
+	global SEQ_FILE_HANDLE
 	fileName = askopenfilename()
 	if not fileName:
 		return
-	with open(fileName) as file:
+	
+	SEQ_FILE_HANDLE = fileName
+	loadSeqFileContent()	
+
+def loadSeqFileContent():
+	global SEQ_FILE_CONTENT
+	global SEQ_FILE_NAME
+	global SEQ_FILE_HANDLE
+	if not SEQ_FILE_HANDLE:
+		return
+		
+	with open(SEQ_FILE_HANDLE) as file:
 		SEQ_FILE_CONTENT = file.readlines()
 	
 	#remove whitespace chars
 	SEQ_FILE_CONTENT = [line.strip() for line in SEQ_FILE_CONTENT]
-	SEQ_FILE_NAME = path.basename(fileName)
-	status.set("%s", "seq file read: " + SEQ_FILE_NAME)
-	trackerSeqFile()	
+	SEQ_FILE_NAME = path.basename(SEQ_FILE_HANDLE)
+	status.set("%s", "load seq file: " + SEQ_FILE_NAME)
+	trackerSeqFile()
 		
 def saveBlock():
 	global BLOCK_LIST
@@ -695,7 +718,7 @@ class Controls:
 			frame, text="SeqFile : size", fg="blue")
 		
 		print "load interface"
-		frame.grid(column=0,row=0, columnspan=6)
+		frame.grid(column=0,row=0, columnspan=6, sticky=W)
 		resetButton.grid(row=0, column=0, sticky=W)
 		createButton.grid(row=0, column=1)
 		self.midiButton.grid(row=0, column=2)
@@ -795,7 +818,7 @@ class Header(Frame):
 		self.canvas = Canvas(self, width=500, height=100)
 		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
 				
-		vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
+		vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
 		self.textHead1 = Text(self.canvas, font=vFont, fg="green", bg="black")
 		self.textHead2 = Text(self.canvas, font=vFont, fg="green", bg="black")
 		self.textHead1.config(height=1, width=67)
@@ -821,7 +844,7 @@ class Tracker(Frame):
 		self.seqLength = 0		
 		#self.moveFraction = 0.017
 		
-		self.vFont = tkFont.Font(family="Verdana",size=12,weight="normal")
+		self.vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
 		self.fontHeight = self.vFont.metrics("linespace")	
 		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 100))
 		self.canvas.config(width=540, height=100)
@@ -915,7 +938,7 @@ class BitPlayer(Frame):
 		playCardPin(self.cardAddr, pinsArray.get(self.bitsChecked, None))
 		
 	def stopBit(self):
-		stopAll();
+		stopCard();
 		
 	#def modifyBit(self):
 		#depends on rom, use #17 for Warlok
@@ -925,8 +948,10 @@ class BitPlayer(Frame):
 		self.result = self.entryBits.get()
 	
 	def updateCard(self):
+		global USER_CARD
 		self.entryCard.delete(0,END)
 		self.entryCard.insert(0, self.radioCard.get())
+		USER_CARD = self.radioCard.get()
 	
 	def apply(self):
 		self.userCard = self.entryCard.get()
@@ -977,6 +1002,8 @@ utilmenu.add_command(label="Test one pin", command=oneTest)
 utilmenu.add_command(label="Test all pins", command=allTest)
 utilmenu.add_separator()
 utilmenu.add_command(label="Seq type select", command=seqTypeSelect)
+utilmenu.add_separator()
+utilmenu.add_command(label="Reload seq file", command=loadSeqFileContent)
 
 infomenu = Menu(menu)
 menu.add_cascade(label="Info", menu=infomenu)
