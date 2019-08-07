@@ -17,7 +17,7 @@
 # -Modifier trigger on some roms: 0x17, 0x21, 0x25
 #
 # TODO
-# - 1.4.5 is prep for live, priority additions only
+# - 1.5.0 is five cards add, make better :)
  
 # - add a global 'R' for reset in seq, set by rom+card
 # - rewrite in C (wiringPi) and GTK+3 (Glade)
@@ -45,12 +45,13 @@ import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.4.5"
+VERSION = "1.5.0"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
 CARD_4_ADDR = 0x23
-CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR, CARD_4_ADDR]
+CARD_5_ADDR = 0x24
+CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR, CARD_4_ADDR, CARD_5_ADDR]
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
@@ -58,7 +59,7 @@ MAIN_TIMER = 0.8
 MIDI_LISTEN = False
 
 #combine CARD_LIST with CARD_ADDR so enum has both name and address
-CARD_LIST = ["CARD_1", "CARD_2", "CARD_3", "CARD_4"]
+CARD_LIST = ["CARD_1", "CARD_2", "CARD_3", "CARD_4", "CARD_5"]
 SEQ_TYPE_LIST = ["patt1Test", "blockSeqPlay", "seqFilePlay"]
 USER_SEQ_TYPE = ""
 USER_CARD = "CARD_1"
@@ -315,6 +316,8 @@ def getCardAddr(cardName):
 		return CARD_ENUM[2]
 	elif cardName == "CARD_4":
 		return CARD_ENUM[3]
+	elif cardName == "CARD_5":
+		return CARD_ENUM[4]
 	else:
 		return CARD_ENUM[0]
 	
@@ -576,10 +579,10 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		global VERSION
 		Label(master, text="WiLL-i-ROMS Controller").grid(row=0,sticky=W)
 		Label(master, text="Hex Sequencer version " + VERSION).grid(row=1,sticky=W)
-		Label(master, text="(multi board testing)").grid(row=2,sticky=W)
+		Label(master, text="(five board testing)").grid(row=2,sticky=W)
 		Label(master, text="(live version)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
-		Label(master, text="KaputnikGo, 2017").grid(row=5,sticky=W)
+		Label(master, text="KaputnikGo, 2019").grid(row=5,sticky=W)
 	
 	
 class CreateDialog(tkSimpleDialog.Dialog):	
@@ -815,7 +818,7 @@ class Controls:
 class Header(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.canvas = Canvas(self, width=500, height=100)
+		self.canvas = Canvas(self, width=620, height=100)
 		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
 				
 		vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
@@ -824,8 +827,8 @@ class Header(Frame):
 		self.textHead1.config(height=1, width=67)
 		self.textHead2.config(height=1, width=67)
 							
-		self.textHead1.insert("1.0", "LINE\tCARD1\tCLK\tCARD2\tCC\tCARD3\tCC\tCARD4\tCC\n")
-		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t   ")
+		self.textHead1.insert("1.0", "LINE\tCARD1\tCLK\tCARD2\tCC\tCARD3\tCC\tCARD4\tCC\tCARD5\tCC\t\n")
+		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t  \t     \t ")
 		self.textHead1.grid(row=0, column=0, columnspan=6)
 		self.textHead2.grid(row=2, column=0, columnspan=6)
 		
@@ -835,7 +838,7 @@ class Header(Frame):
 		
 	def playheadClear(self):
 		self.textHead2.delete(1.0, END)
-		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t   ")
+		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t  \t     \t   ")
 		
 
 class Tracker(Frame):
@@ -847,7 +850,7 @@ class Tracker(Frame):
 		self.vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
 		self.fontHeight = self.vFont.metrics("linespace")	
 		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 100))
-		self.canvas.config(width=540, height=100)
+		self.canvas.config(width=620, height=100)
 		self.canvas.grid(row=0, column=0, sticky=NW)
 
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
@@ -881,7 +884,7 @@ class Tracker(Frame):
 class BitPlayer(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.canvas = Canvas(self, width=540, height=200)
+		self.canvas = Canvas(self, width=620, height=200)
 		self.canvas.grid(row=0, column=0, columnspan=5, rowspan=2, sticky=NW)
 		self.canvas.config(bg="gray44")
 		
