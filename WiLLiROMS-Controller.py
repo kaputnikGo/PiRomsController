@@ -1,24 +1,24 @@
-# WiLL-i-ROMS-Controller
+# WiLL-i-ROMS Controller
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboards
 # using python -V 2.7.3
 #
 # NOTES:
+# - 1.5.0 is five cards add, make better :)
 # -sequencer file format different from blocks
-# -sound card(s) enumeration
+# -sound card(s) enumeration to console
 # -Card1 CC is now timer CLK
-# -sped up seq loading into tracker to near instant
-# -card / seq type selector now to dialog from util menu
-# -adding bit player and code clean up
-# -added card 4
-# -change block format into seq format
-# -moved bitPlayer, cardSelect to main screen, removed 2 dialogs
+# -added card 5
 # -added reload seqfile in util menu
+# -added i2c bus detect to tracker view, prints found cards.
 # -Modifier trigger on some roms: 0x17, 0x21, 0x25
 #
+# ROMS: 1=pinball1, 2=defender, 3=blackout, 4=cosmicgunfight, 5=sinistar
+
 # TODO
-# - 1.5.0 is five cards add, make better :)
- 
+# tab size is py-default 8, need 4 String.expandtabs(4) just makes 4 spaces
+# need to replace the tabs (if cant change global) with columns
+# get rid of the CC column...
 # - add a global 'R' for reset in seq, set by rom+card
 # - rewrite in C (wiringPi) and GTK+3 (Glade)
 # - sort out the old block Play code, replace with seq format
@@ -36,7 +36,7 @@ from Tkinter import *
 import tkSimpleDialog
 from tkFileDialog import askopenfilename
 from tkFileDialog import asksaveasfilename
-import tkFont
+import tkFont as tkFont
 import tkMessageBox
 import smbus
 import time
@@ -52,6 +52,7 @@ CARD_3_ADDR = 0x22
 CARD_4_ADDR = 0x23
 CARD_5_ADDR = 0x24
 CARD_ENUM = [CARD_1_ADDR, CARD_2_ADDR, CARD_3_ADDR, CARD_4_ADDR, CARD_5_ADDR]
+CARD_PRINT = ""
 
 TEST_TIMER = 0.2
 RUN_LOOP = False
@@ -96,10 +97,13 @@ block3Array = {
 bus = smbus.SMBus(1)
 iodir_register = 0x00
 gpio_register = 0x09
-#enable as output
+#enable as output, print to tracker sceen as well as console
+cardNum = 1
 for card in CARD_ENUM:
-	print("Card: " + str("0x%x" % card))
+	CARD_PRINT += ("Card " + str(cardNum) + ": " + str("0x%x" % card) + "\n")
 	bus.write_byte_data(card, iodir_register, 0x00)
+	cardNum += 1
+print(CARD_PRINT)
 
 midiPort = 1 # set for MK-425C midi controller
 	
@@ -108,13 +112,15 @@ midiPort = 1 # set for MK-425C midi controller
 def stopAll():
 	#must zero the pins first, pin 19 (0x23) as RESET
 	# this pin is not used in some ROMs, instead: 21,22 (0x25, 0x26)
-	# ensure cards 1,2,3 are type 1 with 0x23 reset roms.
-	#need to figure out rom use in card4 
+	# cards 1,2,3 are type 1 with 0x23 reset roms.
+	# card4 reset is 0x26, card5 is 0x08
 	global CARD_ENUM
 	for card in CARD_ENUM:
 		bus.write_byte_data(card, gpio_register, 0x00)
 		if card == CARD_4_ADDR:
 			bus.write_byte_data(card, gpio_register, 0x26)
+		elif card == CARD_5_ADDR:
+			bus.write_byte_data(card, gpio_register, 0x08)
 		else:
 			bus.write_byte_data(card, gpio_register, 0x23)
 
@@ -131,6 +137,8 @@ def stopCard():
 	
 	if USER_CARD == "CARD_4":
 		bus.write_byte_data(cardEnum, gpio_register, 0x26)
+	elif USER_CARD == "CARD_5":
+			bus.write_byte_data(card, gpio_register, 0x08)
 	else:
 		bus.write_byte_data(cardEnum, gpio_register, 0x23)
 		
@@ -781,7 +789,7 @@ class Controls:
 		if self.sq.isAlive():
 			root.after(250, self.checkThreadSQ)
 		else:
-			print "end SQ thread"
+			print "end SEQ thread"
 			return
 	#end func
 		
@@ -818,17 +826,20 @@ class Controls:
 class Header(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.canvas = Canvas(self, width=620, height=100)
+		self.canvas = Canvas(self, width=540, height=100)
 		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
 				
 		vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
+		tab_width = vFont.measure(' ' * 16)
 		self.textHead1 = Text(self.canvas, font=vFont, fg="green", bg="black")
 		self.textHead2 = Text(self.canvas, font=vFont, fg="green", bg="black")
-		self.textHead1.config(height=1, width=67)
-		self.textHead2.config(height=1, width=67)
+		self.textHead1.config(height=1, width=90)
+		self.textHead1.config(tabs=(tab_width,))
+		self.textHead2.config(height=1, width=90)
+		self.textHead2.config(tabs=(tab_width,))
 							
 		self.textHead1.insert("1.0", "LINE\tCARD1\tCLK\tCARD2\tCC\tCARD3\tCC\tCARD4\tCC\tCARD5\tCC\t\n")
-		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t  \t     \t ")
+		self.textHead2.insert("1.0", "   \t   \t  \t   \t  \t   \t  \t   \t  \t   \t  \t  \t")
 		self.textHead1.grid(row=0, column=0, columnspan=6)
 		self.textHead2.grid(row=2, column=0, columnspan=6)
 		
@@ -838,25 +849,30 @@ class Header(Frame):
 		
 	def playheadClear(self):
 		self.textHead2.delete(1.0, END)
-		self.textHead2.insert("1.0", "   \t     \t  \t     \t  \t     \t  \t     \t  \t     \t   ")
+		self.textHead2.insert("1.0", "   \t   \t  \t   \t  \t   \t  \t   \t  \t   \t  \t  \t")
 		
 
 class Tracker(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
+		
+		global CARD_PRINT
 		self.seqLength = 0		
 		#self.moveFraction = 0.017
 		
 		self.vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
-		self.fontHeight = self.vFont.metrics("linespace")	
-		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 100))
-		self.canvas.config(width=620, height=100)
+		tab_width = self.vFont.measure(' ' * 12)
+		self.fontHeight = self.vFont.metrics("linespace")
+		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 200))
+		self.canvas.config(width=530, height=200)
 		self.canvas.grid(row=0, column=0, sticky=NW)
 
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
-			font=self.vFont, fill="green")			
-		self.fontHeight = self.vFont.metrics("linespace")		
-		self.canvas.itemconfig(self.canvasTextID, text="non tracker")
+			font=self.vFont, fill="green")
+			
+		#self.canvas.itemconfig(self.canvasTextID, tabs=(tab_width,))
+					
+		self.canvas.itemconfig(self.canvasTextID, text=str("i2c bus detect: \n\n" + CARD_PRINT))
 		
 		self.yscrollbar = Scrollbar(self, orient=VERTICAL)
 		self.yscrollbar.grid(row=0, column=6, sticky=N+S)
@@ -884,8 +900,8 @@ class Tracker(Frame):
 class BitPlayer(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.canvas = Canvas(self, width=620, height=200)
-		self.canvas.grid(row=0, column=0, columnspan=5, rowspan=2, sticky=NW)
+		self.canvas = Canvas(self, width=530, height=100)
+		self.canvas.grid(row=0, column=0, columnspan=6, rowspan=2, sticky=NW)
 		self.canvas.config(bg="gray44")
 		
 		#card selector
@@ -982,6 +998,7 @@ class StatusBar(Frame):
 
 ####### MAIN PROGRAM #######
 root = Tk()
+root.geometry("550x400")
 root.title("WiLL-i-ROMS Controller - Hex Sequencer - " + VERSION)
 controls = Controls(root)
 #add menu
@@ -1026,6 +1043,7 @@ bitPlayer.grid(row=4, column=0,columnspan=6, rowspan=2, sticky=W)
 #statusbar
 status = StatusBar(root)
 status.grid(row=6, column=0, columnspan=6, sticky=NW)
-status.set("%s", "ready")
+winSize = "w: " + str(root.winfo_width()) + ", h: " + str(root.winfo_height())
+status.set("%s", "ready: " + winSize)
 
 root.mainloop()
