@@ -16,9 +16,10 @@
 
 /*
  * 	TODO
- *  - couple of lines of console display below buttons
- * 		- as a gtk_scrolled_window
- * 	- tracker window, also as a gtk_scrolled_window
+ *  - hardcode test pin in view for 5 cards and play them
+ *  - open and view sequence file
+ * 	- play the opened sequence file
+ * 
  *  - menu bar
  *  - 2 views : compose and perform
  * 	- proper the name and file(s)
@@ -32,7 +33,6 @@ struct Card {
 	struct Card *next; /* if ever linked */
 };
 
-/* struct Card card1, card2, card3, card4, card5; */
 struct Card Cards[CARDSNUM];
 int user_card_num;
 
@@ -46,7 +46,10 @@ int get_card_num_by_name(char *seek);
 void card_presence(GtkWidget *widget, gpointer data);
 void card_polling(GtkWidget *widget, gpointer data);
 void play_all_test(GtkWidget *widget, gpointer data);
+
 void console_print(char *message);
+void card_print(int cardNum, char *message);
+void block_print();
 
 
 char *cardNames[CARDSNUM] = {
@@ -63,8 +66,15 @@ int pinsArray[PINSNUM] = {
 	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 
 	0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F
 	};
+	
+char *testBlock[8] = {
+	"11", "0", "3", "3", "9", "4", "12", "0"
+	};
+	
 
-GtkTextBuffer *console_buffer;
+GtkTextBuffer *console_buffer, *card1_buffer, *card2_buffer;
+GtkTextBuffer *card3_buffer, *card4_buffer, *card5_buffer;
+GtkTextIter console_iter, card_iter;
 
 static gboolean delete_event(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	/* return false here will destroy window
@@ -81,7 +91,11 @@ int main(int argc, char *argv[]) {
 	GtkWidget *separator;
 	GtkWidget *button_presence, *button_polling, *button_test;
 	GtkWidget *console_window, *console_view;
+	GtkWidget *tracker_window;
+	GtkWidget *card1_view, *card2_view, *card3_view, *card4_view, *card5_view;
+	
 	GdkColor console_text_color, console_back_color;
+	PangoFontDescription *mono_font;
 	 
 
 	gtk_init(&argc, &argv);
@@ -97,7 +111,7 @@ int main(int argc, char *argv[]) {
 	 
 /* GTK UI */
 	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-	gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
+	gtk_window_set_default_size(GTK_WINDOW(window), 1000, 740);
 	gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
 	gtk_window_set_title(GTK_WINDOW(window), "WiLL-i-ROMS prototype");
 	 
@@ -117,23 +131,23 @@ int main(int argc, char *argv[]) {
 	radio_card1 = gtk_radio_button_new_with_label(NULL, Cards[0].name);
 	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio_card1), TRUE);
 	g_signal_connect(radio_card1, "toggled", G_CALLBACK(card_select), (gpointer)0);
-	gtk_box_pack_start(GTK_BOX(radio_box), radio_card1, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(radio_box), radio_card1, FALSE, FALSE, 12);
 	
 	radio_card2 = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(radio_card1), Cards[1].name);
 	g_signal_connect(radio_card2, "toggled", G_CALLBACK(card_select), (gpointer)1);
-	gtk_box_pack_start(GTK_BOX(radio_box), radio_card2, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(radio_box), radio_card2, FALSE, FALSE, 12);
 	
 	radio_card3 = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(radio_card2), Cards[2].name);
 	g_signal_connect(radio_card3, "toggled", G_CALLBACK(card_select), (gpointer)2);
-	gtk_box_pack_start(GTK_BOX(radio_box), radio_card3, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(radio_box), radio_card3, FALSE, FALSE, 12);
 	
 	radio_card4 = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(radio_card3), Cards[3].name);
 	g_signal_connect(radio_card4, "toggled", G_CALLBACK(card_select), (gpointer)3);
-	gtk_box_pack_start(GTK_BOX(radio_box), radio_card4, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(radio_box), radio_card4, FALSE, FALSE, 12);
 	
 	radio_card5 = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(radio_card4), Cards[4].name);
 	g_signal_connect(radio_card5, "toggled", G_CALLBACK(card_select), (gpointer)4);
-	gtk_box_pack_start(GTK_BOX(radio_box), radio_card5, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(radio_box), radio_card5, FALSE, FALSE, 12);
 
 /* separator above buttons */
 	separator = gtk_hseparator_new();
@@ -164,19 +178,128 @@ int main(int argc, char *argv[]) {
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(console_window),
 		GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
 	gtk_fixed_put(GTK_FIXED(fixed), console_window, 5, 85);
-	gtk_widget_set_size_request(console_window, 480, 100);
+	gtk_widget_set_size_request(console_window, 480, 50);
 	/* console text view */
 	console_view = gtk_text_view_new();
 	gtk_text_view_set_editable(GTK_TEXT_VIEW(console_view), FALSE);
 	gtk_text_view_set_left_margin(GTK_TEXT_VIEW(console_view), 5);
-	gdk_color_parse("green", &console_text_color);
+	
+	mono_font = pango_font_description_from_string("Monospace 8");
+	gtk_widget_modify_font(console_view, mono_font);
+	
+	gdk_color_parse("white", &console_text_color);
 	gdk_color_parse("black", &console_back_color);
 	gtk_widget_modify_text(console_view, GTK_STATE_NORMAL, &console_text_color);
 	gtk_widget_modify_base(console_view, GTK_STATE_NORMAL, &console_back_color);
 	console_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(console_view));
-	console_print("WiLL-i-ROMS\nPrototype sequencer.\nConsole window for message printouts.");
+	console_print("WiLL-i-ROMS Prototype sequencer.");
+	console_print("\nConsole window for message printouts.");
+	console_print("\nNow with monofont 8 spacing!");
 	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(console_window), console_view);
+
+/* tracker container */
+	tracker_window = gtk_scrolled_window_new(NULL, NULL);
+	gtk_container_set_border_width(GTK_CONTAINER(tracker_window), 5);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(tracker_window),
+		GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
+	gtk_fixed_put(GTK_FIXED(fixed), tracker_window, 5, 140);
+	gtk_widget_set_size_request(tracker_window, 480, 240);
 	
+
+/* card tracker view, 5 cards */
+	card1_view = gtk_text_view_new();
+	gtk_fixed_put(GTK_FIXED(fixed), card1_view, 10, 145);
+	gtk_widget_set_size_request(card1_view, 80, 220);
+	
+	card2_view = gtk_text_view_new();
+	gtk_fixed_put(GTK_FIXED(fixed), card2_view, 100, 145);
+	gtk_widget_set_size_request(card2_view, 80, 220);
+	
+	card3_view = gtk_text_view_new();
+	gtk_fixed_put(GTK_FIXED(fixed), card3_view, 190, 145);
+	gtk_widget_set_size_request(card3_view, 80, 220);
+	
+	card4_view = gtk_text_view_new();
+	gtk_fixed_put(GTK_FIXED(fixed), card4_view, 280, 145);
+	gtk_widget_set_size_request(card4_view, 80, 220);
+	
+	card5_view = gtk_text_view_new();
+	gtk_fixed_put(GTK_FIXED(fixed), card5_view, 370, 145);
+	gtk_widget_set_size_request(card5_view, 80, 220);
+	
+	gtk_text_view_set_editable(GTK_TEXT_VIEW(card1_view), FALSE);
+	gtk_text_view_set_left_margin(GTK_TEXT_VIEW(card1_view), 5);
+	
+	gtk_text_view_set_editable(GTK_TEXT_VIEW(card2_view), FALSE);
+	gtk_text_view_set_left_margin(GTK_TEXT_VIEW(card2_view), 5);
+	
+	gtk_text_view_set_editable(GTK_TEXT_VIEW(card3_view), FALSE);
+	gtk_text_view_set_left_margin(GTK_TEXT_VIEW(card3_view), 5);
+	
+	gtk_text_view_set_editable(GTK_TEXT_VIEW(card4_view), FALSE);
+	gtk_text_view_set_left_margin(GTK_TEXT_VIEW(card4_view), 5);
+	
+	gtk_text_view_set_editable(GTK_TEXT_VIEW(card5_view), FALSE);
+	gtk_text_view_set_left_margin(GTK_TEXT_VIEW(card5_view), 5);
+	
+	gtk_widget_modify_text(card1_view, GTK_STATE_NORMAL, &console_text_color);
+	gtk_widget_modify_base(card1_view, GTK_STATE_NORMAL, &console_back_color);
+	gtk_widget_modify_font(card1_view, mono_font);
+	
+	gtk_widget_modify_text(card2_view, GTK_STATE_NORMAL, &console_text_color);
+	gtk_widget_modify_base(card2_view, GTK_STATE_NORMAL, &console_back_color);
+	gtk_widget_modify_font(card2_view, mono_font);
+	
+	gtk_widget_modify_text(card3_view, GTK_STATE_NORMAL, &console_text_color);
+	gtk_widget_modify_base(card3_view, GTK_STATE_NORMAL, &console_back_color);
+	gtk_widget_modify_font(card3_view, mono_font);
+	
+	gtk_widget_modify_text(card4_view, GTK_STATE_NORMAL, &console_text_color);
+	gtk_widget_modify_base(card4_view, GTK_STATE_NORMAL, &console_back_color);
+	gtk_widget_modify_font(card4_view, mono_font);
+	
+	gtk_widget_modify_text(card5_view, GTK_STATE_NORMAL, &console_text_color);
+	gtk_widget_modify_base(card5_view, GTK_STATE_NORMAL, &console_back_color);
+	gtk_widget_modify_font(card5_view, mono_font);
+	
+	pango_font_description_free(mono_font);
+	
+	card1_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(card1_view));	
+	card_print(1, "Card1\naddr 0x20\niodir 0x00");
+	card_print(1, "\n[PinRom]\nready...");
+	card_print(1, "\n__________");
+	
+	card2_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(card2_view));
+	card_print(2, "Card2\naddr 0x21\niodir 0x00");
+	card_print(2, "\n[Defend]\nready...");
+	card_print(2, "\n__________");
+	
+	card3_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(card3_view));	
+	card_print(3, "Card3\naddr 0x22\niodir 0x00");
+	card_print(3, "\n[BlkOut]\nready...");
+	card_print(3, "\n__________");
+	
+	card4_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(card4_view));	
+	card_print(4, "Card4\naddr 0x23\niodir 0x00");
+	card_print(4, "\n[CosGun]\nready...");
+	card_print(4, "\n__________");
+	
+	card5_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(card5_view));	
+	card_print(5, "Card5\naddr 0x24\niodir 0x00");
+	card_print(5, "\n[SinStr]\nready...");
+	card_print(5, "\n__________");
+	
+	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card1_view);
+	/*
+	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card2_view);
+	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card3_view);
+	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card4_view);
+	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card5_view);
+	*/
+
+	/*testing */
+	block_print();
+	block_print();
 	
 /* main gtk run */
 	gtk_widget_show_all(window);
@@ -222,7 +345,6 @@ void print_card(int candidate) {
 	g_print("Card name: %s\n", Cards[candidate].name);
 	g_print("Card address: 0x%02X\n", Cards[candidate].address);
 	g_print("Card fd: %d\n", Cards[candidate].fd);
-	/* need a function to concatenate chars and return them */
 	console_print(Cards[candidate].name);
 }
 
@@ -257,7 +379,7 @@ int get_card_num_by_name(char *seek) {
 /* 
  * 
  * 
- * button functions 
+ * test button functions 
  * 
  * 
  * */
@@ -315,7 +437,47 @@ void play_all_test(GtkWidget *widget, gpointer data) {
  * 
  * */
 void console_print(char *message) {
-	/* print it to the console view */
-	/* need append, deletes current text... */
-	gtk_text_buffer_set_text(console_buffer, message, -1);
+	/* append print it to the console view */
+	/* message will need to include \n at start */
+	gtk_text_buffer_get_end_iter(console_buffer, &console_iter);
+	gtk_text_buffer_insert(console_buffer, &console_iter, message, -1);
+}
+
+void card_print(int cardNum, char *message) {
+	/* append print to chosen card view */
+	switch (cardNum) {
+		case 1:
+			gtk_text_buffer_get_end_iter(card1_buffer, &card_iter);
+			gtk_text_buffer_insert(card1_buffer, &card_iter, message, -1);
+			break;
+		case 2:
+			gtk_text_buffer_get_end_iter(card2_buffer, &card_iter);
+			gtk_text_buffer_insert(card2_buffer, &card_iter, message, -1);
+			break;
+		case 3:
+			gtk_text_buffer_get_end_iter(card3_buffer, &card_iter);
+			gtk_text_buffer_insert(card3_buffer, &card_iter, message, -1);
+			break;
+		case 4:
+			gtk_text_buffer_get_end_iter(card4_buffer, &card_iter);
+			gtk_text_buffer_insert(card4_buffer, &card_iter, message, -1);
+			break;
+		case 5:
+			gtk_text_buffer_get_end_iter(card5_buffer, &card_iter);
+			gtk_text_buffer_insert(card5_buffer, &card_iter, message, -1);
+			break;
+		default:
+			console_print("Error card_print number.");
+	}
+}
+
+void block_print() {
+	/* test print the values from array */
+	int i, j;
+	for (i = 0; i < CARDSNUM; ++i) {
+		for (j = 0; j < 8; ++j) {
+			card_print(i + 1, "\n");
+			card_print(i + 1, testBlock[j]);
+		}
+	}
 }
