@@ -7,6 +7,7 @@
 #include <wiringPi.h>
 #include <wiringPiI2C.h>
 #include <string.h>
+#include <stdio.h>
 
 #define IODIR_REG 0x00
 #define GPIO_REG 0x09
@@ -16,13 +17,21 @@
 
 /*
  * 	TODO
- *  - hardcode test pin in view for 5 cards and play them
- *  - open and view sequence file
- * 	- play the opened sequence file
+ *  - open and view sequence file - testSeq.txt
+ *  - eg seq line format: n,0.25|n,0|0,0|15,0|3,0
+ * 	- play the opened sequence file, ie:
+ *  - FILE *seqFP = fopen("testSeq.txt", "r")
+ *  - while (fscanf(*seqFP, "%d", &intIn) == 1)
+ * 		array[i] = intIn
+ *  - fclose(seqFP)
+ *  - playFilePins(array)
  * 
  *  - menu bar
- *  - 2 views : compose and perform
+ *  - 2 views : compose and perform ? or edit in the play window ?
  * 	- proper the name and file(s)
+ *  - console_print_data(*message, gpointer data)
+ *  - console_view window not auto-scrolling
+ *  - card view scrollbar not working
  * 
  */
 
@@ -46,10 +55,15 @@ int get_card_num_by_name(char *seek);
 void card_presence(GtkWidget *widget, gpointer data);
 void card_polling(GtkWidget *widget, gpointer data);
 void play_all_test(GtkWidget *widget, gpointer data);
+void play_block_test(GtkWidget *widget, gpointer data);
+
+void play_user_card_pin(int pinInt);
+void play_all_cards_pin(int pinInt);
+void play_card_pin(int card, int PinInt);
 
 void console_print(char *message);
 void card_print(int cardNum, char *message);
-void block_print();
+void block_print_int();
 
 
 char *cardNames[CARDSNUM] = {
@@ -66,12 +80,16 @@ int pinsArray[PINSNUM] = {
 	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 
 	0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F
 	};
-	
-char *testBlock[8] = {
-	"11", "0", "3", "3", "9", "4", "12", "0"
+
+int testBlockInt[8] = {
+	11, 0, 3, 3, 9, 4, 12, 0
 	};
 	
+int testBlockHex[8] = {
+	0x0B, 0x00, 0x03, 0x03, 0x09, 0x04, 0x0C, 0x00
+	};		
 
+GtkWidget *console_view;
 GtkTextBuffer *console_buffer, *card1_buffer, *card2_buffer;
 GtkTextBuffer *card3_buffer, *card4_buffer, *card5_buffer;
 GtkTextIter console_iter, card_iter;
@@ -89,14 +107,14 @@ int main(int argc, char *argv[]) {
 	GtkWidget *radio_box;
 	GtkWidget *radio_card1, *radio_card2, *radio_card3, *radio_card4, *radio_card5;
 	GtkWidget *separator;
-	GtkWidget *button_presence, *button_polling, *button_test;
-	GtkWidget *console_window, *console_view;
+	GtkWidget *button_presence, *button_polling, *button_test, *button_play;
+	GtkWidget *console_window;
 	GtkWidget *tracker_window;
 	GtkWidget *card1_view, *card2_view, *card3_view, *card4_view, *card5_view;
 	
 	GdkColor console_text_color, console_back_color;
 	PangoFontDescription *mono_font;
-	 
+	/*GdkColor window_color */ 
 
 	gtk_init(&argc, &argv);
 	 
@@ -111,6 +129,10 @@ int main(int argc, char *argv[]) {
 	 
 /* GTK UI */
 	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	/*
+	gdk_color_parse("red", &window_color);
+	gtk_widget_modify_bg(window, GTK_STATE_NORMAL, &window_color);
+	*/
 	gtk_window_set_default_size(GTK_WINDOW(window), 1000, 740);
 	gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
 	gtk_window_set_title(GTK_WINDOW(window), "WiLL-i-ROMS prototype");
@@ -155,22 +177,28 @@ int main(int argc, char *argv[]) {
 	gtk_widget_set_size_request(separator, 480, 2);
 	 
 /* card presence button */
-	button_presence = gtk_button_new_with_label("Check card");
-	gtk_fixed_put(GTK_FIXED(fixed), button_presence, 20, 50);
+	button_presence = gtk_button_new_with_label("Init card");
+	gtk_fixed_put(GTK_FIXED(fixed), button_presence, 10, 50);
 	gtk_widget_set_size_request(button_presence, 100, 30);
 	g_signal_connect(button_presence, "clicked", G_CALLBACK(card_presence), (gpointer)"button_presence");
 	 
 /* card polling button */
 	button_polling = gtk_button_new_with_label("Poll card");
-	gtk_fixed_put(GTK_FIXED(fixed), button_polling, 180, 50);
+	gtk_fixed_put(GTK_FIXED(fixed), button_polling, 120, 50);
 	gtk_widget_set_size_request(button_polling, 100, 30);
 	g_signal_connect(button_polling, "clicked", G_CALLBACK(card_polling), (gpointer)"button_polling");
 
 /* play_all_test button */
-	button_test = gtk_button_new_with_label("Test all pins");
-	gtk_fixed_put(GTK_FIXED(fixed), button_test, 340, 50);
+	button_test = gtk_button_new_with_label("Test pins");
+	gtk_fixed_put(GTK_FIXED(fixed), button_test, 230, 50);
 	gtk_widget_set_size_request(button_test, 100, 30);
 	g_signal_connect(button_test, "clicked", G_CALLBACK(play_all_test), (gpointer)"button_test");
+
+/* play button , play values from testBlockInt */
+	button_play = gtk_button_new_with_label("Play block");
+	gtk_fixed_put(GTK_FIXED(fixed), button_play, 340, 50);
+	gtk_widget_set_size_request(button_play, 100, 30);
+	g_signal_connect(button_play, "clicked", G_CALLBACK(play_block_test), (gpointer)"button_play");
 
 /* console window */
 	console_window = gtk_scrolled_window_new(NULL, NULL);
@@ -187,7 +215,7 @@ int main(int argc, char *argv[]) {
 	mono_font = pango_font_description_from_string("Monospace 8");
 	gtk_widget_modify_font(console_view, mono_font);
 	
-	gdk_color_parse("white", &console_text_color);
+	gdk_color_parse("yellow", &console_text_color);
 	gdk_color_parse("black", &console_back_color);
 	gtk_widget_modify_text(console_view, GTK_STATE_NORMAL, &console_text_color);
 	gtk_widget_modify_base(console_view, GTK_STATE_NORMAL, &console_back_color);
@@ -296,10 +324,7 @@ int main(int argc, char *argv[]) {
 	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card4_view);
 	gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(tracker_window), card5_view);
 	*/
-
-	/*testing */
-	block_print();
-	block_print();
+	play_user_card_pin(3);
 	
 /* main gtk run */
 	gtk_widget_show_all(window);
@@ -327,6 +352,7 @@ gboolean init_cards() {
 		
 			int writeReg = wiringPiI2CWriteReg8(Cards[i].fd, IODIR_REG, 0x00);
 			if (writeReg == -1) {
+				console_print("\nError writing to IODIR register - init_cards");
 				g_print("\nError writing to IODIR register for %s.\n", Cards[i].name);
 			}
 			else {				
@@ -345,6 +371,7 @@ void print_card(int candidate) {
 	g_print("Card name: %s\n", Cards[candidate].name);
 	g_print("Card address: 0x%02X\n", Cards[candidate].address);
 	g_print("Card fd: %d\n", Cards[candidate].fd);
+	console_print("\n");
 	console_print(Cards[candidate].name);
 }
 
@@ -360,6 +387,7 @@ gboolean card_ready(int candidate) {
 	/* Cards[x].fd is a linux file descriptor for the card address */
 	if (Cards[candidate].fd == -1) {
 		/* card 1 device failed to init */
+		console_print("\nCard device not ready.");
 		g_print("%s not ready error.\n", Cards[candidate].name);
 		return FALSE;
 	}		
@@ -376,6 +404,47 @@ int get_card_num_by_name(char *seek) {
 	return 0;
 }
 
+void play_user_card_pin(int pinInt) {
+	/* play the pin int for current user_card_num */
+	/* need to trigger 0x00 before each sound */
+	/* check writeReg first for any errors */
+	if (wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, 0x00) == -1) {
+		console_print("\nError writing to GPIO register - play_user_card_pin");
+		g_print("\nError writing to GPIO register for %s.\n", Cards[user_card_num].name);
+	}
+	wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, pinInt);
+	console_print("\nPlay_user_card_pin.");
+	g_print("\nplay_user_card_pin num: %d\n", pinInt);
+}
+
+void play_all_cards_pin(int pinInt) {
+	/* loop all cards and play the pin int */
+	int i;
+	for (i = 0; i < CARDSNUM; ++i) {
+		/* */
+		if (wiringPiI2CWriteReg8(Cards[i].fd, GPIO_REG, 0x00) == -1) {
+			console_print("\nError writing to GPIO register - play_all_cards_pin");
+			g_print("\nError writing to GPIO register for %s.\n", Cards[i].name);
+		}
+		wiringPiI2CWriteReg8(Cards[i].fd, GPIO_REG, pinInt);
+		console_print("\nPlay_all_cards_pin.");
+		g_print("\nplay_all_cards num %d with pin num: %d\n", i, pinInt);
+	}
+}
+
+void play_card_pin(int card_select, int pinInt) {
+	/* play pin int with selected card only */
+	/* need to trigger 0x00 before each sound */
+	/* check writeReg first for any errors */
+	if (wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, 0x00) == -1) {
+		console_print("\nError writing to GPIO register - play_user_card_pin");
+		g_print("\nError writing to GPIO register with card_select %d for %s.\n", card_select, Cards[card_select].name);
+	}
+	wiringPiI2CWriteReg8(Cards[card_select].fd, GPIO_REG, pinInt);
+	console_print("\nPlay_card_pin.");
+	g_print("\nplay_card_select %d with pin num: %d\n", card_select, pinInt);
+}
+
 /* 
  * 
  * 
@@ -388,6 +457,7 @@ void card_presence(GtkWidget *widget, gpointer data) {
 	if (card_ready(user_card_num)) {
 		print_card(user_card_num);
 	}
+	console_print("\nCard presence check end.");
 	g_print("Card presence check end - %s was pressed.\n", (gchar *)data);
 }
 
@@ -396,12 +466,13 @@ void card_polling(GtkWidget *widget, gpointer data) {
     /* (0x00) reset first, then (0x01) card1: blaster sound */
 	int writeReg = wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, 0x00);
 	if (writeReg == -1) {
+		console_print("\nError writing to GPIO register - card_polling");
 		g_print("\nError writing to GPIO register for %s.\n", Cards[user_card_num].name);
 	}
 	else {
 		wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, 0x01);
 	}
-		
+	console_print("\nCard polling check end");	
 	g_print("Card polling check end - %s was pressed\n", (gchar *)data);
 }
 
@@ -412,10 +483,12 @@ void play_all_test(GtkWidget *widget, gpointer data) {
 	int i;
 	int writeReg = wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, 0x00);
 	if (writeReg == -1) {
+		console_print("\nError writing to GPIO register - play_all");
 		g_print("\nError writing to GPIO register for %s.\n", Cards[user_card_num].name);
 	}
 	else {
 		// loop to play all pins
+		console_print("\nTest all sounds");
 		g_print("\nTest all sounds for %s\n", Cards[user_card_num].name);
 		for (i = 1; i < PINSNUM; ++i) {
 			wiringPiI2CWriteReg8(Cards[user_card_num].fd, GPIO_REG, 0x00);
@@ -426,6 +499,14 @@ void play_all_test(GtkWidget *widget, gpointer data) {
 		}
 	}
 	g_print("\nplayAllTest check end - %s was pressed\n", (gchar *)data);
+}
+
+void play_block_test(GtkWidget *widget, gpointer data) {
+	/* test to load array of pins as sequence, display in view and play */
+	play_card_pin(0, testBlockInt[0]);
+	play_all_cards_pin(testBlockInt[4]);
+	/* display the block */
+	block_print_int();
 }
 
 /* 
@@ -441,6 +522,11 @@ void console_print(char *message) {
 	/* message will need to include \n at start */
 	gtk_text_buffer_get_end_iter(console_buffer, &console_iter);
 	gtk_text_buffer_insert(console_buffer, &console_iter, message, -1);
+	
+	/*gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(console_view), 
+		gtk_text_mark_new(NULL, FALSE), 0, FALSE, 0, 0);*/
+	
+	gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(console_view), &console_iter, 0.0, FALSE, 0.0, 0.0);
 }
 
 void card_print(int cardNum, char *message) {
@@ -467,17 +553,20 @@ void card_print(int cardNum, char *message) {
 			gtk_text_buffer_insert(card5_buffer, &card_iter, message, -1);
 			break;
 		default:
-			console_print("Error card_print number.");
+			console_print("\nError card_print number.");
 	}
 }
 
-void block_print() {
-	/* test print the values from array */
+void block_print_int() {
+	/* test print the values from fixed int array */
 	int i, j;
+	char a[sizeof(int)];
 	for (i = 0; i < CARDSNUM; ++i) {
 		for (j = 0; j < 8; ++j) {
+			/* convert int array value to char * for print */
+			snprintf(a, sizeof(int), "%d", testBlockInt[j]);
 			card_print(i + 1, "\n");
-			card_print(i + 1, testBlock[j]);
+			card_print(i + 1, a);
 		}
 	}
 }
