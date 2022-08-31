@@ -1,10 +1,13 @@
 # WiLL-i-ROMS Controller
 #
 # raspPi -> mcp23008 -> CD4066B -> Soundboards
-# using python -V 2.7.3
+# using python -V 2.7.3 <-- to be confirmed
+# all import names changed from 2.x to 3.x
 #
 # NOTES:
-# - 1.5.0 is five cards add, make better :)
+# - 1.6.0 is compiled for new Raspi 3 Model B
+# -- no Midi as python-rtmidi is 2.x and does not compile in 3.x
+#
 # -sequencer file format different from blocks
 # -sound card(s) enumeration to console
 # -Card1 CC is now timer CLK
@@ -32,20 +35,20 @@
 # - rom12.716 organ trigger ?
 # - pinX[1] as volume pot via pwm, or ROM id num ?
 #
-from Tkinter import *
-import tkSimpleDialog
-from tkFileDialog import askopenfilename
-from tkFileDialog import asksaveasfilename
-import tkFont as tkFont
-import tkMessageBox
+from tkinter import *
+from tkinter import simpledialog as tkSimpleDialog
+from tkinter import filedialog
+#from tkFileDialog import asksaveasfilename
+import tkinter.font as tkFont
+from tkinter import messagebox as tkMessageBox
 import smbus
 import time
-from rtmidi.midiutil import open_midiport
+#from rtmidi.midiutil import open_midiport
 import threading
 from os import path
 
 #GLOBALS
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 CARD_1_ADDR = 0x20
 CARD_2_ADDR = 0x21
 CARD_3_ADDR = 0x22
@@ -62,6 +65,7 @@ MIDI_LISTEN = False
 #combine CARD_LIST with CARD_ADDR so enum has both name and address
 CARD_LIST = ["CARD_1", "CARD_2", "CARD_3", "CARD_4", "CARD_5"]
 SEQ_TYPE_LIST = ["patt1Test", "blockSeqPlay", "seqFilePlay"]
+DEF_SEQ_TYPE = "patt1Test"
 USER_SEQ_TYPE = ""
 USER_CARD = "CARD_1"
 BIT_LIST = ["19"]
@@ -500,7 +504,7 @@ class SeqThread(threading.Thread):
 		# check or suffer
 		global USER_SEQ_TYPE
 		if not USER_SEQ_TYPE:
-			USER_SEQ_TYPE = globals()["patt1Test"()]()
+			USER_SEQ_TYPE = globals()[DEF_SEQ_TYPE]()
 		
 	def run(self):
 		status.set("%s", "seq thread start")
@@ -514,6 +518,7 @@ class SeqThread(threading.Thread):
 #end class
 
 ########### MIDI INPUT CLASS ###########
+"""
 class MidiThread(threading.Thread):
 
 	def __init__(self):
@@ -561,7 +566,7 @@ class MidiThread(threading.Thread):
 		except (EOFError, KeyboardInterrupt):
 			midiError()
 		
-		print "start MT thread"
+		print("start MT thread")
 		global USER_CARD
 		status.set("%s %s", "Start midi listener on ", USER_CARD)	
 		try:
@@ -579,6 +584,7 @@ class MidiThread(threading.Thread):
 			print('Stop midi listener')
 			midiin.close_port()
 			del midiin
+"""			
 #end class
 
 ###### INTERFACE CLASSES #######
@@ -590,7 +596,7 @@ class AboutDialog(tkSimpleDialog.Dialog):
 		Label(master, text="(five board testing)").grid(row=2,sticky=W)
 		Label(master, text="(live version)").grid(row=3,sticky=W)
 		Label(master, text="---------------------").grid(row=4,sticky=W)
-		Label(master, text="KaputnikGo, 2019").grid(row=5,sticky=W)
+		Label(master, text="KaputnikGo, 2022").grid(row=5,sticky=W)
 	
 	
 class CreateDialog(tkSimpleDialog.Dialog):	
@@ -706,7 +712,7 @@ class Controls:
 			frame, text="Reset", fg="red", command=self.goReset)
 		
 		self.midiButton = Button(
-			frame, text="midi OFF", fg="black", command=self.goMidi)
+			frame, text="NO midi", fg="black")#, command=self.goMidi)
 		
 		createButton = Button(
 			frame, text="Create", command=self.goCreate)
@@ -728,7 +734,7 @@ class Controls:
 		self.currentSeqLabel = Label(
 			frame, text="SeqFile : size", fg="blue")
 		
-		print "load interface"
+		print("load interface")
 		frame.grid(column=0,row=0, columnspan=6, sticky=W)
 		resetButton.grid(row=0, column=0, sticky=W)
 		createButton.grid(row=0, column=1)
@@ -741,7 +747,7 @@ class Controls:
 		self.currentSeqLabel.grid(row=1, column=0, columnspan=5, sticky=W)		
 			
 	def goReset(self):
-		print "reset"
+		print("reset")
 		stopAll()
 	#end func
 
@@ -750,10 +756,11 @@ class Controls:
 		if self.mt.isAlive():
 			root.after(500, self.checkThreadMT)
 		else:
-			print "end MT thread"
+			print("end MT thread")
 			status.set("%s", "Stop midi listener")
 			return
-	#end func	
+	#end func
+		
 	def goMidi(self, tog=[0]):
 		global MIDI_LISTEN
 		#global USER_CARD	
@@ -770,14 +777,14 @@ class Controls:
 			self.midiButton.config(text='midi OFF', fg="black")
 			MIDI_LISTEN = False
 	#end func
-	
+
 	def goCreate(self):
 		#dialog box for user input of int keys and Nones
 		createDialog = CreateDialog(root)
 		createBlock(createDialog.result)
 	
 	def goLoop(self):
-		print "goLoop check"
+		print("goLoop check")
 		loopCheckControl(self.varLoop.get())
 		
 	def loopBind(event):
@@ -789,7 +796,7 @@ class Controls:
 		if self.sq.isAlive():
 			root.after(250, self.checkThreadSQ)
 		else:
-			print "end SEQ thread"
+			print("end SEQ thread")
 			return
 	#end func
 		
@@ -826,7 +833,7 @@ class Controls:
 class Header(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.canvas = Canvas(self, width=540, height=100)
+		self.canvas = Canvas(self, width=600, height=100)
 		self.canvas.grid(row=0, column=0, columnspan=6, sticky=NW)
 				
 		vFont = tkFont.Font(family="Verdana",size=10,weight="normal")
@@ -864,7 +871,7 @@ class Tracker(Frame):
 		tab_width = self.vFont.measure(' ' * 12)
 		self.fontHeight = self.vFont.metrics("linespace")
 		self.canvas = Canvas(self, bg="black", scrollregion=(0, 0, 0, 200))
-		self.canvas.config(width=530, height=200)
+		self.canvas.config(width=590, height=200)
 		self.canvas.grid(row=0, column=0, sticky=NW)
 
 		self.canvasTextID = self.canvas.create_text(5, 5, anchor="nw", 
@@ -900,7 +907,7 @@ class Tracker(Frame):
 class BitPlayer(Frame):
 	def __init__(self, master):
 		Frame.__init__(self, master)
-		self.canvas = Canvas(self, width=530, height=100)
+		self.canvas = Canvas(self, width=590, height=100)
 		self.canvas.grid(row=0, column=0, columnspan=6, rowspan=2, sticky=NW)
 		self.canvas.config(bg="gray44")
 		
@@ -998,7 +1005,7 @@ class StatusBar(Frame):
 
 ####### MAIN PROGRAM #######
 root = Tk()
-root.geometry("550x400")
+root.geometry("600x400")
 root.title("WiLL-i-ROMS Controller - Hex Sequencer - " + VERSION)
 controls = Controls(root)
 #add menu
