@@ -424,7 +424,7 @@ def loadBlock():
 
 def loadSeqFile():
 	global SEQ_FILE_HANDLE
-	fileName = askopenfilename()
+	fileName = filedialog.askopenfilename()
 	if not fileName:
 		return
 	
@@ -793,7 +793,7 @@ class Controls:
 	
 #playSeq thread, SeqThread(sequence)
 	def checkThreadSQ(self):
-		if self.sq.isAlive():
+		if self.sq.is_alive():
 			root.after(250, self.checkThreadSQ)
 		else:
 			print("end SEQ thread")
